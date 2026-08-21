@@ -1,0 +1,49 @@
+{
+  "id": "03",
+  "task": "Click the red Delete button.",
+  "target_bbox": [
+    82,
+    272,
+    237,
+    322
+  ],
+  "predicted_point": [
+    187,
+    262
+  ],
+  "hit": false,
+  "miss_distance_px": 10.0,
+  "zoom_trace": {
+    "coarse_action": {
+      "type": "click",
+      "target": {
+        "cell": 9,
+        "offset_x": 1.0,
+        "offset_y": 0.0
+      }
+    },
+    "crop_box_image_pixels": [
+      0,
+      225,
+      500,
+      525
+    ],
+    "fine_action": {
+      "type": "click",
+      "target": {
+        "cell": 2,
+        "offset_x": 0.0,
+        "offset_y": 0.0
+      }
+    },
+    "final_action": {
+      "type": "click",
+      "target": {
+        "cell": 5,
+        "offset_x": 0.751004016064257,
+        "offset_y": 0.7516778523489933
+      }
+    }
+  },
+  "elapsed_seconds": 3.46
+}

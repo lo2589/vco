@@ -1,0 +1,30 @@
+{
+  "id": "01",
+  "task": "Click the blue Save button.",
+  "target_bbox": [
+    720,
+    475,
+    890,
+    520
+  ],
+  "grid_point": {
+    "cell": 221,
+    "offset_x": 0.5,
+    "offset_y": 0.5
+  },
+  "predicted_point": [
+    780,
+    505
+  ],
+  "hit": true,
+  "miss_distance_px": 0.0,
+  "usage": {
+    "input_tokens": 945,
+    "output_tokens": 19,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 114,
+    "service_tier": "priority"
+  },
+  "raw_text": "{\"cell\":221,\"offset_x\":0.5,\"offset_y\":0.5}",
+  "elapsed_seconds": 15.523
+}

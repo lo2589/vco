@@ -1,0 +1,49 @@
+{
+  "id": "08",
+  "task": "Click the gray Cancel button.",
+  "target_bbox": [
+    425,
+    88,
+    575,
+    138
+  ],
+  "predicted_point": [
+    437,
+    112
+  ],
+  "hit": true,
+  "miss_distance_px": 0.0,
+  "zoom_trace": {
+    "coarse_action": {
+      "type": "click",
+      "target": {
+        "cell": 3,
+        "offset_x": 0.0,
+        "offset_y": 0.0
+      }
+    },
+    "crop_box_image_pixels": [
+      375,
+      0,
+      875,
+      300
+    ],
+    "fine_action": {
+      "type": "click",
+      "target": {
+        "cell": 5,
+        "offset_x": 0.0,
+        "offset_y": 0.0
+      }
+    },
+    "final_action": {
+      "type": "click",
+      "target": {
+        "cell": 2,
+        "offset_x": 0.751004016064257,
+        "offset_y": 0.7516778523489933
+      }
+    }
+  },
+  "elapsed_seconds": 2.94
+}

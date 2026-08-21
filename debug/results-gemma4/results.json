@@ -1,0 +1,519 @@
+{
+  "model": "gemma4:latest",
+  "configuration": {
+    "coarse_grid": "4x4",
+    "crop_span": "2x2 coarse cells",
+    "fine_grid": "4x4",
+    "image_mode": "grid",
+    "final_point": "fine cell center"
+  },
+  "hits": 6,
+  "total": 10,
+  "accuracy": 0.6,
+  "within_20px": 9,
+  "within_20px_rate": 0.9,
+  "total_elapsed_seconds": 162.66,
+  "mean_elapsed_seconds": 16.266,
+  "results": [
+    {
+      "id": "01",
+      "task": "Click the blue Save button.",
+      "target_bbox": [
+        720,
+        475,
+        890,
+        520
+      ],
+      "predicted_point": [
+        812,
+        487
+      ],
+      "hit": true,
+      "miss_distance_px": 0.0,
+      "zoom_trace": {
+        "coarse_action": {
+          "type": "click",
+          "target": {
+            "cell": 16,
+            "offset_x": 0.5,
+            "offset_y": 0.5
+          }
+        },
+        "crop_box_image_pixels": [
+          500,
+          300,
+          1000,
+          600
+        ],
+        "fine_action": {
+          "type": "click",
+          "target": {
+            "cell": 11,
+            "offset_x": 0.5,
+            "offset_y": 0.5
+          }
+        },
+        "fine_center_delta": null,
+        "final_action": {
+          "type": "click",
+          "target": {
+            "cell": 16,
+            "offset_x": 0.24899598393574296,
+            "offset_y": 0.2483221476510067
+          }
+        }
+      },
+      "elapsed_seconds": 13.57
+    },
+    {
+      "id": "02",
+      "task": "Click the green Continue button.",
+      "target_bbox": [
+        755,
+        88,
+        920,
+        138
+      ],
+      "predicted_point": [
+        812,
+        112
+      ],
+      "hit": true,
+      "miss_distance_px": 0.0,
+      "zoom_trace": {
+        "coarse_action": {
+          "type": "click",
+          "target": {
+            "cell": 4,
+            "offset_x": 0.5,
+            "offset_y": 0.2
+          }
+        },
+        "crop_box_image_pixels": [
+          500,
+          0,
+          1000,
+          300
+        ],
+        "fine_action": {
+          "type": "click",
+          "target": {
+            "cell": 7,
+            "offset_x": 0.02,
+            "offset_y": 0.98
+          }
+        },
+        "fine_center_delta": null,
+        "final_action": {
+          "type": "click",
+          "target": {
+            "cell": 4,
+            "offset_x": 0.24899598393574296,
+            "offset_y": 0.7516778523489933
+          }
+        }
+      },
+      "elapsed_seconds": 20.566
+    },
+    {
+      "id": "03",
+      "task": "Click the red Delete button.",
+      "target_bbox": [
+        82,
+        272,
+        237,
+        322
+      ],
+      "predicted_point": [
+        187,
+        262
+      ],
+      "hit": false,
+      "miss_distance_px": 10.0,
+      "zoom_trace": {
+        "coarse_action": {
+          "type": "click",
+          "target": {
+            "cell": 9,
+            "offset_x": 0.5,
+            "offset_y": 0.5
+          }
+        },
+        "crop_box_image_pixels": [
+          0,
+          225,
+          500,
+          525
+        ],
+        "fine_action": {
+          "type": "click",
+          "target": {
+            "cell": 2,
+            "offset_x": 0.5,
+            "offset_y": 0.5
+          }
+        },
+        "fine_center_delta": null,
+        "final_action": {
+          "type": "click",
+          "target": {
+            "cell": 5,
+            "offset_x": 0.751004016064257,
+            "offset_y": 0.7516778523489933
+          }
+        }
+      },
+      "elapsed_seconds": 11.795
+    },
+    {
+      "id": "04",
+      "task": "Click the purple Settings button.",
+      "target_bbox": [
+        78,
+        88,
+        248,
+        138
+      ],
+      "predicted_point": [
+        187,
+        112
+      ],
+      "hit": true,
+      "miss_distance_px": 0.0,
+      "zoom_trace": {
+        "coarse_action": {
+          "type": "click",
+          "target": {
+            "cell": 2,
+            "offset_x": 0.5,
+            "offset_y": 0.38
+          }
+        },
+        "crop_box_image_pixels": [
+          125,
+          0,
+          625,
+          300
+        ],
+        "fine_action": {
+          "type": "click",
+          "target": {
+            "cell": 5,
+            "offset_x": 0.0,
+            "offset_y": 0.0
+          }
+        },
+        "fine_center_delta": null,
+        "final_action": {
+          "type": "click",
+          "target": {
+            "cell": 1,
+            "offset_x": 0.751004016064257,
+            "offset_y": 0.7516778523489933
+          }
+        }
+      },
+      "elapsed_seconds": 9.92
+    },
+    {
+      "id": "05",
+      "task": "Click the orange Submit button.",
+      "target_bbox": [
+        420,
+        270,
+        575,
+        320
+      ],
+      "predicted_point": [
+        562,
+        262
+      ],
+      "hit": false,
+      "miss_distance_px": 8.0,
+      "zoom_trace": {
+        "coarse_action": {
+          "type": "click",
+          "target": {
+            "cell": 11,
+            "offset_x": 0.5,
+            "offset_y": 0.5
+          }
+        },
+        "crop_box_image_pixels": [
+          375,
+          225,
+          875,
+          525
+        ],
+        "fine_action": {
+          "type": "click",
+          "target": {
+            "cell": 2,
+            "offset_x": 0.5,
+            "offset_y": 0.5
+          }
+        },
+        "fine_center_delta": null,
+        "final_action": {
+          "type": "click",
+          "target": {
+            "cell": 7,
+            "offset_x": 0.24899598393574296,
+            "offset_y": 0.7516778523489933
+          }
+        }
+      },
+      "elapsed_seconds": 16.138
+    },
+    {
+      "id": "06",
+      "task": "Click the cyan Next button.",
+      "target_bbox": [
+        80,
+        472,
+        225,
+        520
+      ],
+      "predicted_point": [
+        187,
+        487
+      ],
+      "hit": true,
+      "miss_distance_px": 0.0,
+      "zoom_trace": {
+        "coarse_action": {
+          "type": "click",
+          "target": {
+            "cell": 13,
+            "offset_x": 0.5,
+            "offset_y": 0.5
+          }
+        },
+        "crop_box_image_pixels": [
+          0,
+          300,
+          500,
+          600
+        ],
+        "fine_action": {
+          "type": "click",
+          "target": {
+            "cell": 10,
+            "offset_x": 1.0,
+            "offset_y": 1.0
+          }
+        },
+        "fine_center_delta": null,
+        "final_action": {
+          "type": "click",
+          "target": {
+            "cell": 13,
+            "offset_x": 0.751004016064257,
+            "offset_y": 0.2483221476510067
+          }
+        }
+      },
+      "elapsed_seconds": 18.099
+    },
+    {
+      "id": "07",
+      "task": "Click the blue Download button.",
+      "target_bbox": [
+        750,
+        270,
+        925,
+        320
+      ],
+      "predicted_point": [
+        812,
+        337
+      ],
+      "hit": false,
+      "miss_distance_px": 17.0,
+      "zoom_trace": {
+        "coarse_action": {
+          "type": "click",
+          "target": {
+            "cell": 12,
+            "offset_x": 0.5,
+            "offset_y": 0.5
+          }
+        },
+        "crop_box_image_pixels": [
+          500,
+          225,
+          1000,
+          525
+        ],
+        "fine_action": {
+          "type": "click",
+          "target": {
+            "cell": 7,
+            "offset_x": 0.5,
+            "offset_y": 0.5
+          }
+        },
+        "fine_center_delta": null,
+        "final_action": {
+          "type": "click",
+          "target": {
+            "cell": 12,
+            "offset_x": 0.24899598393574296,
+            "offset_y": 0.2483221476510067
+          }
+        }
+      },
+      "elapsed_seconds": 25.776
+    },
+    {
+      "id": "08",
+      "task": "Click the gray Cancel button.",
+      "target_bbox": [
+        425,
+        88,
+        575,
+        138
+      ],
+      "predicted_point": [
+        437,
+        112
+      ],
+      "hit": true,
+      "miss_distance_px": 0.0,
+      "zoom_trace": {
+        "coarse_action": {
+          "type": "click",
+          "target": {
+            "cell": 3,
+            "offset_x": 0.2,
+            "offset_y": 0.5
+          }
+        },
+        "crop_box_image_pixels": [
+          375,
+          0,
+          875,
+          300
+        ],
+        "fine_action": {
+          "type": "click",
+          "target": {
+            "cell": 5,
+            "offset_x": 0.0,
+            "offset_y": 1.0
+          }
+        },
+        "fine_center_delta": null,
+        "final_action": {
+          "type": "click",
+          "target": {
+            "cell": 2,
+            "offset_x": 0.751004016064257,
+            "offset_y": 0.7516778523489933
+          }
+        }
+      },
+      "elapsed_seconds": 9.398
+    },
+    {
+      "id": "09",
+      "task": "Click the green Apply button.",
+      "target_bbox": [
+        420,
+        472,
+        575,
+        520
+      ],
+      "predicted_point": [
+        437,
+        487
+      ],
+      "hit": true,
+      "miss_distance_px": 0.0,
+      "zoom_trace": {
+        "coarse_action": {
+          "type": "click",
+          "target": {
+            "cell": 15,
+            "offset_x": 0.2,
+            "offset_y": 0.3
+          }
+        },
+        "crop_box_image_pixels": [
+          375,
+          300,
+          875,
+          600
+        ],
+        "fine_action": {
+          "type": "click",
+          "target": {
+            "cell": 9,
+            "offset_x": 0.2,
+            "offset_y": 0.8
+          }
+        },
+        "fine_center_delta": null,
+        "final_action": {
+          "type": "click",
+          "target": {
+            "cell": 14,
+            "offset_x": 0.751004016064257,
+            "offset_y": 0.2483221476510067
+          }
+        }
+      },
+      "elapsed_seconds": 17.429
+    },
+    {
+      "id": "10",
+      "task": "Click the purple Upload button.",
+      "target_bbox": [
+        80,
+        365,
+        235,
+        415
+      ],
+      "predicted_point": [
+        187,
+        337
+      ],
+      "hit": false,
+      "miss_distance_px": 28.0,
+      "zoom_trace": {
+        "coarse_action": {
+          "type": "click",
+          "target": {
+            "cell": 13,
+            "offset_x": 0.5,
+            "offset_y": 0.5
+          }
+        },
+        "crop_box_image_pixels": [
+          0,
+          300,
+          500,
+          600
+        ],
+        "fine_action": {
+          "type": "click",
+          "target": {
+            "cell": 2,
+            "offset_x": 0.5,
+            "offset_y": 0.5
+          }
+        },
+        "fine_center_delta": null,
+        "final_action": {
+          "type": "click",
+          "target": {
+            "cell": 9,
+            "offset_x": 0.751004016064257,
+            "offset_y": 0.2483221476510067
+          }
+        }
+      },
+      "elapsed_seconds": 19.969
+    }
+  ]
+}

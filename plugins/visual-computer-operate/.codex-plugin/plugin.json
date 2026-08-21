@@ -1,0 +1,23 @@
+{
+  "name": "visual-computer-operate",
+  "version": "0.1.0",
+  "description": "Locate and operate bounded screen regions through MiniMax-M3 numbered-grid vision.",
+  "author": {
+    "name": "a1"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Visual Computer Operate",
+    "shortDescription": "Locate and click visible controls through a safe grid.",
+    "longDescription": "Adds bounded screen capture, model-directed adaptive zoom, dry-run localization, mouse execution, and isolated cache management.",
+    "developerName": "a1",
+    "category": "Productivity",
+    "capabilities": ["Interactive", "Read", "Write"],
+    "defaultPrompt": [
+      "Locate the requested control without clicking it.",
+      "Operate this bounded screen region until the visible task is complete.",
+      "Show the Visual Computer Operate cache status."
+    ]
+  },
+  "mcpServers": "./.mcp.json"
+}

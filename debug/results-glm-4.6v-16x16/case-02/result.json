@@ -1,0 +1,39 @@
+{
+  "id": "02",
+  "task": "Click the green Continue button.",
+  "target_bbox": [
+    755,
+    88,
+    920,
+    138
+  ],
+  "grid_point": {
+    "cell": 62,
+    "offset_x": 0.5,
+    "offset_y": 0.5
+  },
+  "predicted_point": [
+    843,
+    130
+  ],
+  "hit": true,
+  "miss_distance_px": 0.0,
+  "provider_metadata": {
+    "model": "glm-4.6v",
+    "elapsed_seconds": 5.513,
+    "usage": {
+      "completion_tokens": 30,
+      "completion_tokens_details": {
+        "reasoning_tokens": 0
+      },
+      "prompt_tokens": 1649,
+      "prompt_tokens_details": {
+        "cached_tokens": 5
+      },
+      "total_tokens": 1679
+    },
+    "thinking": "disabled",
+    "image_mode": "both"
+  },
+  "elapsed_seconds": 5.631
+}

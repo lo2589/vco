@@ -1,0 +1,50 @@
+{
+  "id": "06",
+  "task": "Click the cyan Next button.",
+  "target_bbox": [
+    80,
+    472,
+    225,
+    520
+  ],
+  "predicted_point": [
+    187,
+    487
+  ],
+  "hit": true,
+  "miss_distance_px": 0.0,
+  "zoom_trace": {
+    "coarse_action": {
+      "type": "click",
+      "target": {
+        "cell": 13,
+        "offset_x": 0.5,
+        "offset_y": 0.5
+      }
+    },
+    "crop_box_image_pixels": [
+      0,
+      300,
+      500,
+      600
+    ],
+    "fine_action": {
+      "type": "click",
+      "target": {
+        "cell": 10,
+        "offset_x": 1.0,
+        "offset_y": 1.0
+      }
+    },
+    "fine_center_delta": null,
+    "final_action": {
+      "type": "click",
+      "target": {
+        "cell": 13,
+        "offset_x": 0.751004016064257,
+        "offset_y": 0.2483221476510067
+      }
+    }
+  },
+  "elapsed_seconds": 18.099
+}

@@ -1,0 +1,57 @@
+{
+  "id": "07",
+  "task": "Click the blue Download button.",
+  "target_bbox": [
+    750,
+    270,
+    925,
+    320
+  ],
+  "predicted_point": [
+    812,
+    262
+  ],
+  "hit": false,
+  "miss_distance_px": 8.0,
+  "zoom_trace": {
+    "coarse_action": {
+      "type": "click",
+      "target": {
+        "cell": 12,
+        "offset_x": 0.0,
+        "offset_y": 0.0
+      }
+    },
+    "crop_box_image_pixels": [
+      500,
+      225,
+      1000,
+      525
+    ],
+    "fine_action": {
+      "type": "click",
+      "target": {
+        "cell": 3,
+        "offset_x": 0.5,
+        "offset_y": 0.5
+      }
+    },
+    "fine_center_delta": {
+      "type": "click",
+      "target": {
+        "cell": 3,
+        "delta_x_px": 0,
+        "delta_y_px": 0
+      }
+    },
+    "final_action": {
+      "type": "click",
+      "target": {
+        "cell": 8,
+        "offset_x": 0.24899598393574296,
+        "offset_y": 0.7516778523489933
+      }
+    }
+  },
+  "elapsed_seconds": 5.103
+}

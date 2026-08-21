@@ -1,0 +1,49 @@
+{
+  "id": "02",
+  "task": "Click the green Continue button.",
+  "target_bbox": [
+    755,
+    88,
+    920,
+    138
+  ],
+  "predicted_point": [
+    937,
+    112
+  ],
+  "hit": false,
+  "miss_distance_px": 17.0,
+  "zoom_trace": {
+    "coarse_action": {
+      "type": "click",
+      "target": {
+        "cell": 8,
+        "offset_x": 1.0,
+        "offset_y": 1.0
+      }
+    },
+    "crop_box_image_pixels": [
+      500,
+      75,
+      1000,
+      375
+    ],
+    "fine_action": {
+      "type": "click",
+      "target": {
+        "cell": 4,
+        "offset_x": 0.0,
+        "offset_y": 0.0
+      }
+    },
+    "final_action": {
+      "type": "click",
+      "target": {
+        "cell": 4,
+        "offset_x": 0.751004016064257,
+        "offset_y": 0.7516778523489933
+      }
+    }
+  },
+  "elapsed_seconds": 1.965
+}

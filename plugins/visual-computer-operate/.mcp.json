@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "visual-computer-operate": {
+      "command": "/usr/bin/python3",
+      "args": ["-m", "vco.mcp_server"],
+      "cwd": "/Users/a1/Workspace/WORKSPACE/visual_computer_operate",
+      "env": {
+        "VCO_MINIMAX_SETTINGS": "/Users/a1/Workspace/PROJECTSPACE/para-llm-for-vscode-main/paper_bentch/data/provider_settings.minimax.json",
+        "VCO_GLM_SETTINGS": "/Users/a1/Workspace/PROJECTSPACE/para-llm-for-vscode-main/paper_bentch/data/provider_settings.glm.json",
+        "VCO_CACHE_ROOT": "/Users/a1/Workspace/WORKSPACE/visual_computer_operate/cache"
+      }
+    }
+  }
+}

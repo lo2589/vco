@@ -1,0 +1,405 @@
+{
+  "model": "glm-4.6v",
+  "configuration": {
+    "grid": "16x16",
+    "stages": 1,
+    "image_mode": "both",
+    "thinking": "disabled"
+  },
+  "hits": 10,
+  "total": 10,
+  "accuracy": 1.0,
+  "mean_elapsed_seconds": 5.912,
+  "results": [
+    {
+      "id": "01",
+      "task": "Click the blue Save button.",
+      "target_bbox": [
+        720,
+        475,
+        890,
+        520
+      ],
+      "grid_point": {
+        "cell": 222,
+        "offset_x": 0.5,
+        "offset_y": 0.5
+      },
+      "predicted_point": [
+        843,
+        505
+      ],
+      "hit": true,
+      "miss_distance_px": 0.0,
+      "provider_metadata": {
+        "model": "glm-4.6v",
+        "elapsed_seconds": 5.728,
+        "usage": {
+          "completion_tokens": 30,
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "prompt_tokens": 1649,
+          "prompt_tokens_details": {
+            "cached_tokens": 5
+          },
+          "total_tokens": 1679
+        },
+        "thinking": "disabled",
+        "image_mode": "both"
+      },
+      "elapsed_seconds": 5.874
+    },
+    {
+      "id": "02",
+      "task": "Click the green Continue button.",
+      "target_bbox": [
+        755,
+        88,
+        920,
+        138
+      ],
+      "grid_point": {
+        "cell": 62,
+        "offset_x": 0.5,
+        "offset_y": 0.5
+      },
+      "predicted_point": [
+        843,
+        130
+      ],
+      "hit": true,
+      "miss_distance_px": 0.0,
+      "provider_metadata": {
+        "model": "glm-4.6v",
+        "elapsed_seconds": 5.513,
+        "usage": {
+          "completion_tokens": 30,
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "prompt_tokens": 1649,
+          "prompt_tokens_details": {
+            "cached_tokens": 5
+          },
+          "total_tokens": 1679
+        },
+        "thinking": "disabled",
+        "image_mode": "both"
+      },
+      "elapsed_seconds": 5.631
+    },
+    {
+      "id": "03",
+      "task": "Click the red Delete button.",
+      "target_bbox": [
+        82,
+        272,
+        237,
+        322
+      ],
+      "grid_point": {
+        "cell": 131,
+        "offset_x": 0.5,
+        "offset_y": 0.5
+      },
+      "predicted_point": [
+        155,
+        318
+      ],
+      "hit": true,
+      "miss_distance_px": 0.0,
+      "provider_metadata": {
+        "model": "glm-4.6v",
+        "elapsed_seconds": 5.464,
+        "usage": {
+          "completion_tokens": 30,
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "prompt_tokens": 1649,
+          "prompt_tokens_details": {
+            "cached_tokens": 5
+          },
+          "total_tokens": 1679
+        },
+        "thinking": "disabled",
+        "image_mode": "both"
+      },
+      "elapsed_seconds": 5.586
+    },
+    {
+      "id": "04",
+      "task": "Click the purple Settings button.",
+      "target_bbox": [
+        78,
+        88,
+        248,
+        138
+      ],
+      "grid_point": {
+        "cell": 51,
+        "offset_x": 0.5,
+        "offset_y": 0.5
+      },
+      "predicted_point": [
+        155,
+        130
+      ],
+      "hit": true,
+      "miss_distance_px": 0.0,
+      "provider_metadata": {
+        "model": "glm-4.6v",
+        "elapsed_seconds": 5.561,
+        "usage": {
+          "completion_tokens": 30,
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "prompt_tokens": 1649,
+          "prompt_tokens_details": {
+            "cached_tokens": 5
+          },
+          "total_tokens": 1679
+        },
+        "thinking": "disabled",
+        "image_mode": "both"
+      },
+      "elapsed_seconds": 5.674
+    },
+    {
+      "id": "05",
+      "task": "Click the orange Submit button.",
+      "target_bbox": [
+        420,
+        270,
+        575,
+        320
+      ],
+      "grid_point": {
+        "cell": 121,
+        "offset_x": 0.5,
+        "offset_y": 0.5
+      },
+      "predicted_point": [
+        530,
+        280
+      ],
+      "hit": true,
+      "miss_distance_px": 0.0,
+      "provider_metadata": {
+        "model": "glm-4.6v",
+        "elapsed_seconds": 5.501,
+        "usage": {
+          "completion_tokens": 30,
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "prompt_tokens": 1649,
+          "prompt_tokens_details": {
+            "cached_tokens": 5
+          },
+          "total_tokens": 1679
+        },
+        "thinking": "disabled",
+        "image_mode": "both"
+      },
+      "elapsed_seconds": 5.617
+    },
+    {
+      "id": "06",
+      "task": "Click the cyan Next button.",
+      "target_bbox": [
+        80,
+        472,
+        225,
+        520
+      ],
+      "grid_point": {
+        "cell": 211,
+        "offset_x": 0.5,
+        "offset_y": 0.5
+      },
+      "predicted_point": [
+        155,
+        505
+      ],
+      "hit": true,
+      "miss_distance_px": 0.0,
+      "provider_metadata": {
+        "model": "glm-4.6v",
+        "elapsed_seconds": 5.518,
+        "usage": {
+          "completion_tokens": 30,
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "prompt_tokens": 1649,
+          "prompt_tokens_details": {
+            "cached_tokens": 5
+          },
+          "total_tokens": 1679
+        },
+        "thinking": "disabled",
+        "image_mode": "both"
+      },
+      "elapsed_seconds": 5.629
+    },
+    {
+      "id": "07",
+      "task": "Click the blue Download button.",
+      "target_bbox": [
+        750,
+        270,
+        925,
+        320
+      ],
+      "grid_point": {
+        "cell": 142,
+        "offset_x": 0.5,
+        "offset_y": 0.5
+      },
+      "predicted_point": [
+        843,
+        318
+      ],
+      "hit": true,
+      "miss_distance_px": 0.0,
+      "provider_metadata": {
+        "model": "glm-4.6v",
+        "elapsed_seconds": 4.926,
+        "usage": {
+          "completion_tokens": 30,
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "prompt_tokens": 1649,
+          "prompt_tokens_details": {
+            "cached_tokens": 5
+          },
+          "total_tokens": 1679
+        },
+        "thinking": "disabled",
+        "image_mode": "both"
+      },
+      "elapsed_seconds": 5.04
+    },
+    {
+      "id": "08",
+      "task": "Click the gray Cancel button.",
+      "target_bbox": [
+        425,
+        88,
+        575,
+        138
+      ],
+      "grid_point": {
+        "cell": 57,
+        "offset_x": 0.5,
+        "offset_y": 0.5
+      },
+      "predicted_point": [
+        530,
+        130
+      ],
+      "hit": true,
+      "miss_distance_px": 0.0,
+      "provider_metadata": {
+        "model": "glm-4.6v",
+        "elapsed_seconds": 5.802,
+        "usage": {
+          "completion_tokens": 30,
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "prompt_tokens": 1649,
+          "prompt_tokens_details": {
+            "cached_tokens": 5
+          },
+          "total_tokens": 1679
+        },
+        "thinking": "disabled",
+        "image_mode": "both"
+      },
+      "elapsed_seconds": 5.928
+    },
+    {
+      "id": "09",
+      "task": "Click the green Apply button.",
+      "target_bbox": [
+        420,
+        472,
+        575,
+        520
+      ],
+      "grid_point": {
+        "cell": 217,
+        "offset_x": 0.5,
+        "offset_y": 0.5
+      },
+      "predicted_point": [
+        530,
+        505
+      ],
+      "hit": true,
+      "miss_distance_px": 0.0,
+      "provider_metadata": {
+        "model": "glm-4.6v",
+        "elapsed_seconds": 5.701,
+        "usage": {
+          "completion_tokens": 30,
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "prompt_tokens": 1649,
+          "prompt_tokens_details": {
+            "cached_tokens": 5
+          },
+          "total_tokens": 1679
+        },
+        "thinking": "disabled",
+        "image_mode": "both"
+      },
+      "elapsed_seconds": 5.815
+    },
+    {
+      "id": "10",
+      "task": "Click the purple Upload button.",
+      "target_bbox": [
+        80,
+        365,
+        235,
+        415
+      ],
+      "grid_point": {
+        "cell": 163,
+        "offset_x": 0.5,
+        "offset_y": 0.5
+      },
+      "predicted_point": [
+        155,
+        393
+      ],
+      "hit": true,
+      "miss_distance_px": 0.0,
+      "provider_metadata": {
+        "model": "glm-4.6v",
+        "elapsed_seconds": 8.212,
+        "usage": {
+          "completion_tokens": 30,
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "prompt_tokens": 1649,
+          "prompt_tokens_details": {
+            "cached_tokens": 5
+          },
+          "total_tokens": 1679
+        },
+        "thinking": "disabled",
+        "image_mode": "both"
+      },
+      "elapsed_seconds": 8.329
+    }
+  ]
+}

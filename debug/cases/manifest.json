@@ -1,0 +1,132 @@
+[
+  {
+    "id": "01",
+    "filename": "case-01.png",
+    "task": "Click the blue Save button.",
+    "target_label": "Save",
+    "target_color": "blue",
+    "target_bbox": [
+      720,
+      475,
+      890,
+      520
+    ]
+  },
+  {
+    "id": "02",
+    "filename": "case-02.png",
+    "task": "Click the green Continue button.",
+    "target_label": "Continue",
+    "target_color": "green",
+    "target_bbox": [
+      755,
+      88,
+      920,
+      138
+    ]
+  },
+  {
+    "id": "03",
+    "filename": "case-03.png",
+    "task": "Click the red Delete button.",
+    "target_label": "Delete",
+    "target_color": "red",
+    "target_bbox": [
+      82,
+      272,
+      237,
+      322
+    ]
+  },
+  {
+    "id": "04",
+    "filename": "case-04.png",
+    "task": "Click the purple Settings button.",
+    "target_label": "Settings",
+    "target_color": "purple",
+    "target_bbox": [
+      78,
+      88,
+      248,
+      138
+    ]
+  },
+  {
+    "id": "05",
+    "filename": "case-05.png",
+    "task": "Click the orange Submit button.",
+    "target_label": "Submit",
+    "target_color": "orange",
+    "target_bbox": [
+      420,
+      270,
+      575,
+      320
+    ]
+  },
+  {
+    "id": "06",
+    "filename": "case-06.png",
+    "task": "Click the cyan Next button.",
+    "target_label": "Next",
+    "target_color": "cyan",
+    "target_bbox": [
+      80,
+      472,
+      225,
+      520
+    ]
+  },
+  {
+    "id": "07",
+    "filename": "case-07.png",
+    "task": "Click the blue Download button.",
+    "target_label": "Download",
+    "target_color": "blue",
+    "target_bbox": [
+      750,
+      270,
+      925,
+      320
+    ]
+  },
+  {
+    "id": "08",
+    "filename": "case-08.png",
+    "task": "Click the gray Cancel button.",
+    "target_label": "Cancel",
+    "target_color": "gray",
+    "target_bbox": [
+      425,
+      88,
+      575,
+      138
+    ]
+  },
+  {
+    "id": "09",
+    "filename": "case-09.png",
+    "task": "Click the green Apply button.",
+    "target_label": "Apply",
+    "target_color": "green",
+    "target_bbox": [
+      420,
+      472,
+      575,
+      520
+    ]
+  },
+  {
+    "id": "10",
+    "filename": "case-10.png",
+    "task": "Click the purple Upload button.",
+    "target_label": "Upload",
+    "target_color": "purple",
+    "target_bbox": [
+      80,
+      365,
+      235,
+      415
+    ]
+  }
+]

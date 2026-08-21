@@ -1,0 +1,50 @@
+{
+  "id": "10",
+  "task": "Click the purple Upload button.",
+  "target_bbox": [
+    80,
+    365,
+    235,
+    415
+  ],
+  "predicted_point": [
+    187,
+    337
+  ],
+  "hit": false,
+  "miss_distance_px": 28.0,
+  "zoom_trace": {
+    "coarse_action": {
+      "type": "click",
+      "target": {
+        "cell": 13,
+        "offset_x": 0.5,
+        "offset_y": 0.5
+      }
+    },
+    "crop_box_image_pixels": [
+      0,
+      300,
+      500,
+      600
+    ],
+    "fine_action": {
+      "type": "click",
+      "target": {
+        "cell": 2,
+        "offset_x": 0.5,
+        "offset_y": 0.5
+      }
+    },
+    "fine_center_delta": null,
+    "final_action": {
+      "type": "click",
+      "target": {
+        "cell": 9,
+        "offset_x": 0.751004016064257,
+        "offset_y": 0.2483221476510067
+      }
+    }
+  },
+  "elapsed_seconds": 19.969
+}

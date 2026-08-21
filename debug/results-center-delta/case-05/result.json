@@ -1,0 +1,57 @@
+{
+  "id": "05",
+  "task": "Click the orange Submit button.",
+  "target_bbox": [
+    420,
+    270,
+    575,
+    320
+  ],
+  "predicted_point": [
+    500,
+    225
+  ],
+  "hit": false,
+  "miss_distance_px": 45.0,
+  "zoom_trace": {
+    "coarse_action": {
+      "type": "click",
+      "target": {
+        "cell": 11,
+        "offset_x": 0.0,
+        "offset_y": 0.0
+      }
+    },
+    "crop_box_image_pixels": [
+      375,
+      225,
+      875,
+      525
+    ],
+    "fine_action": {
+      "type": "click",
+      "target": {
+        "cell": 2,
+        "offset_x": 0.0,
+        "offset_y": 0.0
+      }
+    },
+    "fine_center_delta": {
+      "type": "click",
+      "target": {
+        "cell": 2,
+        "delta_x_px": -62,
+        "delta_y_px": -37
+      }
+    },
+    "final_action": {
+      "type": "click",
+      "target": {
+        "cell": 7,
+        "offset_x": 0.0,
+        "offset_y": 0.5033557046979866
+      }
+    }
+  },
+  "elapsed_seconds": 10.054
+}

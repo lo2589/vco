@@ -1,0 +1,10 @@
+{
+  "provider": "minimax",
+  "model": "MiniMax-M2.5",
+  "test": "single 4x4 numbered-grid image capability gate for configured M2.5",
+  "elapsed_seconds": 9.232,
+  "image_consumed": false,
+  "json_instruction_followed": false,
+  "full_benchmark_run": false,
+  "verdict": "M2.5 is not vision-capable; use MiniMax-M3 for image input"
+}

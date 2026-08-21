@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "visual-computer-operate"
+version = "0.1.0"
+description = "A numbered-grid visual computer-use prototype"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+  "Pillow>=10.0",
+  "pydantic>=2.7",
+]
+
+[project.optional-dependencies]
+openai = ["openai>=2.0"]
+control = ["pyautogui>=0.9.54"]
+ocr = ["rapidocr>=3.9,<4", "onnxruntime>=1.17"]
+browser = ["playwright>=1.40"]
+all = [
+  "openai>=2.0",
+  "pyautogui>=0.9.54",
+  "rapidocr>=3.9,<4",
+  "onnxruntime>=1.17",
+  "playwright>=1.40",
+]
+
+[project.scripts]
+vco = "vco.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["vco*"]
+
+[tool.setuptools.package-data]
+vco = ["backends/*.swift"]
