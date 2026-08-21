@@ -1,0 +1,50 @@
+{
+  "id": "04",
+  "task": "Click the purple Settings button.",
+  "target_bbox": [
+    78,
+    88,
+    248,
+    138
+  ],
+  "predicted_point": [
+    187,
+    112
+  ],
+  "hit": true,
+  "miss_distance_px": 0.0,
+  "zoom_trace": {
+    "coarse_action": {
+      "type": "click",
+      "target": {
+        "cell": 2,
+        "offset_x": 0.5,
+        "offset_y": 0.38
+      }
+    },
+    "crop_box_image_pixels": [
+      125,
+      0,
+      625,
+      300
+    ],
+    "fine_action": {
+      "type": "click",
+      "target": {
+        "cell": 5,
+        "offset_x": 0.0,
+        "offset_y": 0.0
+      }
+    },
+    "fine_center_delta": null,
+    "final_action": {
+      "type": "click",
+      "target": {
+        "cell": 1,
+        "offset_x": 0.751004016064257,
+        "offset_y": 0.7516778523489933
+      }
+    }
+  },
+  "elapsed_seconds": 9.92
+}

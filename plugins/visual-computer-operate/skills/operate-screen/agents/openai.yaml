@@ -1,0 +1,12 @@
+interface:
+  display_name: "Operate Screen"
+  short_description: "Locate and click controls through numbered grids"
+  default_prompt: "Use $operate-screen to locate a visible control safely before clicking it."
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "visual-computer-operate"
+      description: "Bounded screen capture, adaptive grid localization, and mouse execution"
+      transport: "stdio"
+policy:
+  allow_implicit_invocation: true

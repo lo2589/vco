@@ -1,0 +1,39 @@
+{
+  "id": "07",
+  "task": "Click the blue Download button.",
+  "target_bbox": [
+    750,
+    270,
+    925,
+    320
+  ],
+  "grid_point": {
+    "cell": 142,
+    "offset_x": 0.5,
+    "offset_y": 0.5
+  },
+  "predicted_point": [
+    843,
+    318
+  ],
+  "hit": true,
+  "miss_distance_px": 0.0,
+  "provider_metadata": {
+    "model": "glm-4.6v",
+    "elapsed_seconds": 4.926,
+    "usage": {
+      "completion_tokens": 30,
+      "completion_tokens_details": {
+        "reasoning_tokens": 0
+      },
+      "prompt_tokens": 1649,
+      "prompt_tokens_details": {
+        "cached_tokens": 5
+      },
+      "total_tokens": 1679
+    },
+    "thinking": "disabled",
+    "image_mode": "both"
+  },
+  "elapsed_seconds": 5.04
+}

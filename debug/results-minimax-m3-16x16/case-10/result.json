@@ -1,0 +1,30 @@
+{
+  "id": "10",
+  "task": "Click the purple Upload button.",
+  "target_bbox": [
+    80,
+    365,
+    235,
+    415
+  ],
+  "grid_point": {
+    "cell": 163,
+    "offset_x": 0.5,
+    "offset_y": 0.5
+  },
+  "predicted_point": [
+    155,
+    393
+  ],
+  "hit": true,
+  "miss_distance_px": 0.0,
+  "usage": {
+    "input_tokens": 945,
+    "output_tokens": 19,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 114,
+    "service_tier": "priority"
+  },
+  "raw_text": "{\"cell\":163,\"offset_x\":0.5,\"offset_y\":0.5}",
+  "elapsed_seconds": 10.089
+}

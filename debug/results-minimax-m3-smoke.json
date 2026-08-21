@@ -1,0 +1,26 @@
+{
+  "provider": "minimax",
+  "model": "MiniMax-M3",
+  "test": "single coarse 4x4 numbered-grid image",
+  "expected_cell": 16,
+  "runs": [
+    {
+      "service_tier": "standard",
+      "image_detail": "default",
+      "elapsed_seconds": 9.205,
+      "predicted_cell": 16,
+      "input_tokens": 857,
+      "output_tokens": 7
+    },
+    {
+      "service_tier": "priority",
+      "image_detail": "low",
+      "elapsed_seconds": 4.951,
+      "predicted_cell": 16,
+      "input_tokens": 865,
+      "output_tokens": 5
+    }
+  ],
+  "full_benchmark_run": false,
+  "verdict": "vision works, but one-stage latency is too high for realtime control"
+}
