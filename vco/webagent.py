@@ -20,7 +20,21 @@ object and nothing else. Allowed actions:
 {"action":"click","target":"exact visible text of the element to click"}
 {"action":"click","selector":"css selector"}  (only when no visible text works)
 {"action":"fill","placeholder":"the input placeholder","text":"content to type"}
-{"action":"done","reason":"why the task is complete"}"""
+{"action":"press","key":"Enter"}  (add "selector" to press it inside one element)
+{"action":"scroll","selector":"css selector","dy":-400}  (negative is up; omit
+  selector to scroll the page; this is a real wheel, not a jump)
+{"action":"read","selector":"css selector","props":["scrollTop","scrollHeight"]}
+{"action":"done","reason":"why the task is complete"}
+
+The accessibility tree says what a page contains, never what state it is in.
+Anything measured -- a scroll offset, a size, a count, an input's value -- has
+to be read. Use "read" before claiming a task involving state is done, and say
+in the reason what you read.
+
+Useful props: scrollTop, scrollLeft, scrollHeight, scrollWidth, clientHeight,
+clientWidth, value, textContent, disabled, checked; top/left/width/height for
+the element's position on screen; and "count" for how many elements the
+selector matches."""
 
 
 @dataclass
@@ -57,9 +71,71 @@ def _parse_decision(text: str) -> dict:
         decision.get("placeholder") and decision.get("text") is not None
     ):
         raise ValueError("fill requires placeholder and text")
-    if decision["action"] not in {"click", "fill", "done"}:
+    if decision["action"] == "press" and not decision.get("key"):
+        raise ValueError("press requires key")
+    if decision["action"] == "scroll":
+        try:
+            decision["dy"] = int(decision.get("dy"))
+        except (TypeError, ValueError):
+            raise ValueError("scroll requires an integer dy") from None
+        if decision["dy"] == 0:
+            raise ValueError("scroll dy must not be zero")
+    if decision["action"] == "read":
+        if not decision.get("selector"):
+            raise ValueError("read requires selector")
+        props = decision.get("props")
+        if not isinstance(props, list) or not props:
+            raise ValueError("read requires a non-empty props list")
+        decision["props"] = [str(item) for item in props]
+    if decision["action"] not in {"click", "fill", "press", "scroll", "read", "done"}:
         raise ValueError(f"unknown action: {decision['action']!r}")
     return decision
+
+
+# Reading is a property lookup, never evaluated code: the model chooses which
+# element and which fields, not what runs. Rect fields are served from
+# getBoundingClientRect so "where is it on screen" is askable, and "count" is
+# special-cased because how many things match is a question about the page
+# rather than about one element.
+_READ_JS = """([selector, props]) => {
+  const all = document.querySelectorAll(selector);
+  const el = all[0];
+  const out = {count: all.length};
+  if (!el) return out;
+  const rect = el.getBoundingClientRect();
+  for (const prop of props) {
+    if (prop === "count") continue;
+    let value = (prop in rect) ? rect[prop] : el[prop];
+    if (typeof value === "number") value = Math.round(value);
+    else if (typeof value === "string") value = value.slice(0, 300);
+    else if (value !== null && typeof value === "object") value = String(value);
+    out[prop] = value === undefined ? null : value;
+  }
+  return out;
+}"""
+
+
+def _wheel(page, selector: str | None, dy: int) -> str | None:
+    """Scroll with a real wheel over the target.
+
+    Assigning scrollTop would be simpler and would also be a lie: pages tell
+    a programmatic jump apart from a person turning a wheel, and the ones
+    worth testing behave differently for each.
+    """
+    if selector:
+        locator = page.locator(selector)
+        if locator.count() == 0:
+            return f"scroll target {selector!r} matched nothing"
+        box = locator.first.bounding_box()
+        if box is None:
+            return f"scroll target {selector!r} is not visible"
+        size = page.viewport_size or {"width": 1280, "height": 800}
+        page.mouse.move(
+            box["x"] + box["width"] / 2,
+            min(box["y"] + box["height"] / 2, size["height"] - 8),
+        )
+    page.mouse.wheel(0, dy)
+    return None
 
 
 def run(
@@ -113,10 +189,10 @@ def run(
                     history.append({"step": step, "error": str(exc), "raw": raw[:300]})
                     continue
 
-                record: dict = {"step": step, "decision": decision}
+                entry: dict = {"step": step, "decision": decision}
                 if decision["action"] == "done":
-                    record["metadata"] = getattr(provider, "last_metadata", None)
-                    history.append(record)
+                    entry["metadata"] = getattr(provider, "last_metadata", None)
+                    history.append(entry)
                     _save(artifact_dir, task, history, page=page, stamp=stamp)
                     if hold > 0:
                         page.wait_for_timeout(int(hold * 1000))
@@ -156,9 +232,30 @@ def run(
                         visible=not headless,
                     )
                     error = errors[0] if errors else None
-                record["error"] = error
-                record["metadata"] = getattr(provider, "last_metadata", None)
-                history.append(record)
+                elif decision["action"] == "press":
+                    if decision.get("selector"):
+                        locator = page.locator(decision["selector"])
+                        if locator.count() == 0:
+                            error = f"press target {decision['selector']!r} matched nothing"
+                        else:
+                            locator.first.press(decision["key"])
+                    else:
+                        page.keyboard.press(decision["key"])
+                elif decision["action"] == "scroll":
+                    error = _wheel(page, decision.get("selector"), decision["dy"])
+                elif decision["action"] == "read":
+                    try:
+                        # Straight into the record: what was read is the whole
+                        # point of the step, and the next prompt carries the
+                        # history, so the model gets to reason about the value.
+                        entry["value"] = page.evaluate(
+                            _READ_JS, [decision["selector"], decision["props"]]
+                        )
+                    except Exception as exc:      # noqa: BLE001 - reported, not raised
+                        error = f"read failed: {exc}"
+                entry["error"] = error
+                entry["metadata"] = getattr(provider, "last_metadata", None)
+                history.append(entry)
                 if settle > 0:
                     page.wait_for_timeout(int(settle * 1000))
 
