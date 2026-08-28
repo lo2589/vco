@@ -29,6 +29,9 @@ vco webclick http://127.0.0.1:9005 --fill 输入消息=你好 --target 发送
                                   # --record saves a .webm video of the whole session (works headless)
 vco webrun http://127.0.0.1:9005 --task 'type xxx and click send' --provider ollama --model qwen3:8b
                                   # text-model agent loop: snapshot → decision → DOM action → repeat until done
+vco webdebug http://127.0.0.1:9005 --task 'I scrolled up to read, sent a message, and it jumped to the top'
+                                  # front-end debugger: reproduces the complaint, records why, reports; never edits
+                                  # findings are built from what was recorded, so an unproven cause cannot appear
 ```
 
 Desktop (OCR first; the real mouse moves only via `click`):
@@ -55,13 +58,46 @@ click --at      real click after the circle looks right
 shot            screenshot again to verify the UI actually changed
 ```
 
-Web is simpler: `webtext` to perceive → `webclick` to act (`--expect` verifies inline); or hand the whole task to `webrun` and let a text model drive.
+Web is simpler: `webtext` to perceive → `webclick` to act (`--expect` verifies inline); or hand the whole task to `webrun` and let a text model drive. For a bug rather than a task, `webdebug` — see below.
 
 Key `find`/`click` JSON fields: `found` (exit code 2 when false — a normal outcome, not a failure), `x`/`y`, `method` (`ocr` / `model` / `model+ocr-hints`), `marked_image`, `metadata.elapsed_seconds`.
 
 `ask` supports four providers: `ollama` (local, default `127.0.0.1:11434`), `minimax` and `glm` (need `--minimax-settings` / `--glm-settings` pointing at a JSON file with an api_key), and `openai`. Use `--question` to customize.
 
 Full usage instructions (including safety rules and failure handling) are packaged as a tool-agnostic agent skill: [`skills/operate-screen/SKILL.md`](skills/operate-screen/SKILL.md) — drop it into any agent's skills directory. This repo's `.kimi-code/skills/operate-screen` is a symlink to it, and `plugins/visual-computer-operate/` is the Codex MCP packaging.
+
+## Debugging a front-end bug
+
+`webdebug` takes a complaint in the words someone actually used and comes back with the line that caused it. It reproduces and reports; it never edits. Fixing needs the whole codebase in your head and is where the risk lives, while locating is where the hours go — by the time you know which line moved the value, the edit is usually obvious.
+
+```bash
+vco webdebug http://127.0.0.1:8772/ \
+  --task "I scrolled down to read something, hit Refresh, and the list jumped back to the top" \
+  --provider ollama --model qwen3.6:latest
+```
+
+```json
+{
+  "reproduced": true,
+  "culprit": "HTMLButtonElement.rebuildList (http://127.0.0.1:8772/:25:19)",
+  "how": "assigned",
+  "assignments": [{"from": 1820, "to": 0, "source": "HTMLButtonElement.rebuildList (…:25:19)"}],
+  "user_actions": ["click Refresh list"]
+}
+```
+
+The method is fixed rather than improvised: **measure** the value the complaint is about, **arm** the recorders before touching anything, **act** the way the user did, **collect**, then **report**. Arming late sees nothing, so the order is the point.
+
+`arm` installs two recorders at once, because the two failure modes look identical from outside and only one of them leaves a trail:
+
+- assignments, each with the call stack that made it — this is what names the culprit;
+- a sampler for changes **nobody assigned** — a value also resets when a node is re-attached or re-laid-out, and no stack exists for that.
+
+It drives the page like a person: real clicks, a real wheel, and text typed one character at a time (11 characters means 11 `keydown` events, not one `input`). Debounce, input handlers and autocomplete all behave differently for a value that appears all at once, so a bug that only shows up under real typing still shows up here. Since the accessibility tree carries roles and text but no selectors, every step is also handed the page's scrollable elements and what each is called.
+
+**Findings come from the evidence, not from the model's closing statement.** A stack that was never captured cannot appear in `culprit`, and "cannot reproduce" is reported as itself rather than dressed up as an answer. Exit code is 0 when the bug was reproduced, 2 when it was not — nothing was learned in that case, which is the outcome worth failing on.
+
+`examples/scroll_bug_fixture.html` is a target to try it against: three ways of losing a scroll position, two of which are indistinguishable from outside and are caught by different halves of `arm`.
 
 ## MCP Server
 
@@ -279,7 +315,7 @@ rm -rf ./cache/ ./.screenshot/
 python3 -m unittest discover -v
 ```
 
-Covers grid boundaries, forward/reverse coordinate mapping, strict JSON schema, Ollama/OpenAI/MiniMax transports, edge cropping, two-level zoom, and loop artifacts.
+Covers grid boundaries, forward/reverse coordinate mapping, strict JSON schema, Ollama/OpenAI/MiniMax transports, edge cropping, two-level zoom, and loop artifacts; plus the web agent's decision parsing (refusing precisely matters as much as accepting — a rejected decision is handed back for the model to correct) and the report builder behind `webdebug`, including one test pinning down the rule that a cause the model merely asserted, with nothing recorded behind it, never reaches the findings.
 
 ## Next steps
 
