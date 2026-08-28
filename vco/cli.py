@@ -395,6 +395,34 @@ def build_parser() -> argparse.ArgumentParser:
     webtext.add_argument("--headed", action="store_true", help="show the browser window")
     webtext.add_argument("--hold", type=float, default=0.0, help="keep the window open N seconds after finishing")
 
+    webdebug = commands.add_parser(
+        "webdebug",
+        help="diagnose a front-end bug: reproduce it, record why, report; never edits",
+    )
+    webdebug.add_argument("url")
+    webdebug.add_argument("--task", required=True, help="the complaint, in a user's words")
+    webdebug.add_argument(
+        "--provider", required=True, choices=["ollama", "openai", "minimax", "glm"]
+    )
+    webdebug.add_argument("--model")
+    webdebug.add_argument("--ollama-url", default="http://127.0.0.1:11434")
+    webdebug.add_argument("--timeout", type=float, default=180.0)
+    webdebug.add_argument("--minimax-settings", type=Path)
+    webdebug.add_argument("--minimax-url", default="https://api.minimaxi.com/anthropic")
+    webdebug.add_argument("--minimax-service-tier", choices=["standard", "priority"], default="standard")
+    webdebug.add_argument("--minimax-image-detail", choices=["low", "default", "high"], default="default")
+    webdebug.add_argument("--glm-settings", type=Path)
+    webdebug.add_argument("--glm-thinking", choices=["disabled", "enabled"], default="disabled")
+    webdebug.add_argument("--max-steps", type=int, default=12)
+    webdebug.add_argument("--settle", type=float, default=0.7)
+    webdebug.add_argument("--width", type=int, default=1280)
+    webdebug.add_argument("--height", type=int, default=800)
+    webdebug.add_argument("--profile", type=Path)
+    webdebug.add_argument("--headed", action="store_true", help="show the browser window")
+    webdebug.add_argument("--hold", type=float, default=0.0)
+    webdebug.add_argument("--record", action="store_true")
+    webdebug.add_argument("--dir", type=Path)
+
     webrun = commands.add_parser(
         "webrun", help="agent loop: text model drives a page via aria snapshots"
     )
@@ -1005,6 +1033,34 @@ def main(argv=None) -> int:
             raise SystemExit(str(exc)) from exc
         print(json.dumps(result, indent=2, ensure_ascii=False))
         return 0
+
+    if args.command == "webdebug":
+        if args.max_steps < 1:
+            raise SystemExit("--max-steps must be at least 1")
+        from .webdebug import debug as web_debug
+
+        provider = _base_provider(args)
+        if not hasattr(provider, "chat"):
+            raise SystemExit(f"provider {args.provider} does not support text chat")
+        findings = web_debug(
+            args.task,
+            args.url,
+            provider,
+            max_steps=args.max_steps,
+            settle=args.settle,
+            width=args.width,
+            height=args.height,
+            timeout=args.timeout,
+            profile=None if args.profile is None else str(args.profile),
+            headless=not args.headed,
+            hold=args.hold,
+            record=args.record,
+            artifact_dir=args.dir,
+        )
+        print(json.dumps(findings, indent=2, ensure_ascii=False))
+        # Reproducing the bug is the successful outcome here; failing to is
+        # the one worth a non-zero code, because it means nothing was learned.
+        return 0 if findings["reproduced"] else 2
 
     if args.command == "webrun":
         if args.max_steps < 1:

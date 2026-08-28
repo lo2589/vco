@@ -54,6 +54,24 @@ class ParseDecisionTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 _parse_decision(bad)
 
+    def test_arm_and_collect_need_a_target(self):
+        for action in ("arm", "collect", "trace", "watch"):
+            good = _parse_decision(
+                '{"action":"%s","selector":"#log","prop":"scrollTop"}' % action
+            )
+            self.assertEqual(good["prop"], "scrollTop")
+            with self.assertRaises(ValueError):
+                _parse_decision('{"action":"%s","selector":"#log"}' % action)
+
+    def test_first_complete_object_wins(self):
+        # Models sometimes answer with a decision and then keep talking, or
+        # emit two objects. Taking first-brace-to-last-brace made both of
+        # those unparseable and threw the step away.
+        decision = _parse_decision(
+            '{"action":"done","reason":"ok"}\n{"action":"click","target":"x"}'
+        )
+        self.assertEqual(decision["reason"], "ok")
+
     def test_unknown_action_is_refused(self):
         with self.assertRaises(ValueError):
             _parse_decision('{"action":"navigate","url":"http://example.com"}')

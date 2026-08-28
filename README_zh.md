@@ -27,6 +27,9 @@ vco webclick http://127.0.0.1:9005 --fill 输入消息=你好 --target 发送
                                   # --record 录制整段操作视频（.webm），无头也能录
 vco webrun http://127.0.0.1:9005 --task '输入xxx并点击发送' --provider ollama --model qwen3:8b
                                   # 文本模型自主多步操作：快照→模型决策→DOM 执行→循环直到 done
+vco webdebug http://127.0.0.1:9005 --task '我翻上去看东西，发了条消息，页面自己跳回顶部了'
+                                  # 前端 debug：复现问题、记录原因、给报告；只诊断，不改代码
+                                  # 结论从证据里拼，没抓到栈就不会写出元凶
 ```
 
 桌面（OCR 优先，真实鼠标只在 click 时动）：
@@ -52,13 +55,46 @@ click --at      确认红圈位置正确后执行真实点击
 shot            再截图验证界面真的变了
 ```
 
-网页更简单：`webtext` 感知 → `webclick` 操作（`--expect` 自带验证）；或交给 `webrun` 让文本模型自己跑完整个任务。
+网页更简单：`webtext` 感知 → `webclick` 操作（`--expect` 自带验证）；或交给 `webrun` 让文本模型自己跑完整个任务。手上是个 bug 而不是任务，用 `webdebug`，见下。
 
 `find`/`click` 输出 JSON 关键字段：`found`（false 时退出码 2，是正常结果不是故障）、`x`/`y`、`method`（`ocr` / `model` / `model+ocr-hints`）、`marked_image`、`metadata.elapsed_seconds`。
 
 `ask` 支持四个 provider：`ollama`（本地，默认 `127.0.0.1:11434`）、`minimax` 和 `glm`（需 `--minimax-settings` / `--glm-settings` 指向含 api_key 的 JSON）、`openai`。可用 `--question` 自定义问题。
 
 完整的使用说明（含安全规则和失败处理）写成了工具无关的 agent skill：[`skills/operate-screen/SKILL.md`](skills/operate-screen/SKILL.md)，可直接接入各 agent 的 skills 目录；本仓库的 `.kimi-code/skills/operate-screen` 是指向它的软链，`plugins/visual-computer-operate/` 是给 Codex 的 MCP 版本。
+
+## 调前端 bug
+
+`webdebug` 接受一句用户原话，还回来一个精确到行号的元凶。**它只复现和报告，不改代码**——改代码要把整个上下文装进脑子，风险都在那儿；而时间其实都花在定位上，一旦知道是哪行动的值，怎么改通常是显然的。
+
+```bash
+vco webdebug http://127.0.0.1:8772/ \
+  --task "我往下滚了一段在看中间的内容，一点 Refresh，列表自己跳回最顶上了" \
+  --provider ollama --model qwen3.6:latest
+```
+
+```json
+{
+  "reproduced": true,
+  "culprit": "HTMLButtonElement.rebuildList (http://127.0.0.1:8772/:25:19)",
+  "how": "assigned",
+  "assignments": [{"from": 1820, "to": 0, "source": "HTMLButtonElement.rebuildList (…:25:19)"}],
+  "user_actions": ["click Refresh list"]
+}
+```
+
+方法是固定的，不靠模型临场发挥：**先测**（说不出数就谈不上复现）→ **动手前装记录器** → **像用户那样操作** → **收证据** → **报告**。装晚了什么都看不到，所以顺序本身就是方法的一部分。
+
+`arm` 一次装两个记录器，因为两种失败从外面看一模一样，却只有一种留痕：
+
+- 记每一次赋值，连同做这件事的调用栈——**这个才指得出元凶**；
+- 采样抓**没人赋值的变化**——节点被重新挂载或重排时值也会重置，那种情况压根没有栈。
+
+它像真人一样操作页面：真点击、真滚轮、文字逐字敲进去（11 个字符就是 11 次 `keydown`，不是一次 `input`）。防抖、输入监听、自动完成对"逐字出现"和"整段冒出来"的反应完全不同，所以只在真打字时才犯的 bug 在这儿照样犯。另外无障碍树只有角色和文字、没有选择器，所以每一步还会附上页面上可滚动的元素各叫什么。
+
+**结论只从证据里来，不抄模型的收尾发言。** 没抓到的栈不会出现在 `culprit` 里，"复现不出来"就如实写成复现不出来，不会包装成一个像样的答案。复现成功退出码 0，没复现是 2——后者意味着什么都没查出来，那才是该报错的情况。
+
+`examples/scroll_bug_fixture.html` 是配套的靶子：三种丢失滚动位置的方式，其中两种从外面完全分不出来，得靠 `arm` 的两半分别去抓。
 
 ## MCP Server
 
@@ -276,7 +312,7 @@ rm -rf ./cache/ ./.screenshot/
 python3 -m unittest discover -v
 ```
 
-覆盖网格边界、正反向坐标映射、严格 JSON schema、Ollama/OpenAI/MiniMax 传输、边缘裁剪、两级变焦和闭环留档。
+覆盖网格边界、正反向坐标映射、严格 JSON schema、Ollama/OpenAI/MiniMax 传输、边缘裁剪、两级变焦和闭环留档；以及 web agent 的决策解析（拒绝得准和接受得对同样重要——被拒的决策会回灌给模型自己改）和 `webdebug` 的报告生成，其中一条专门锁住那条规则：模型嘴上断言的原因，只要没有记录支撑，就不许进入结论。
 
 ## 下一步
 

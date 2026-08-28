@@ -24,6 +24,8 @@ object and nothing else. Allowed actions:
 {"action":"scroll","selector":"css selector","dy":-400}  (negative is up; omit
   selector to scroll the page; this is a real wheel, not a jump)
 {"action":"read","selector":"css selector","props":["scrollTop","scrollHeight"]}
+{"action":"trace","selector":"css selector","prop":"scrollTop"}
+{"action":"watch","selector":"css selector","prop":"scrollTop"}
 {"action":"done","reason":"why the task is complete"}
 
 The accessibility tree says what a page contains, never what state it is in.
@@ -34,7 +36,22 @@ in the reason what you read.
 Useful props: scrollTop, scrollLeft, scrollHeight, scrollWidth, clientHeight,
 clientWidth, value, textContent, disabled, checked; top/left/width/height for
 the element's position on screen; and "count" for how many elements the
-selector matches."""
+selector matches.
+
+To find out WHY a value changed, arm before acting and collect afterwards.
+Both trace and watch return [] the first time (that call arms them) and return
+what they caught on every call after that.
+
+  trace  records each assignment to the property, with the call stack that
+         made it. This is what names the culprit.
+  watch  samples the property and reports jumps nobody assigned — a value can
+         be reset by a node being re-attached or re-laid-out, and no stack
+         exists for that. If trace comes back empty but the value moved, watch
+         is the one that sees it.
+
+A diagnosis is: reproduce it as a number, arm, act, collect, name where it
+came from. Do not report a cause you have no trace or watch record for; say
+what you measured and that the source is still unknown."""
 
 
 @dataclass
@@ -57,10 +74,15 @@ class WebRunResult:
 
 def _parse_decision(text: str) -> dict:
     start = text.find("{")
-    end = text.rfind("}")
-    if start < 0 or end < start:
+    if start < 0:
         raise ValueError(f"model returned no JSON object: {text[:200]!r}")
-    decision = json.loads(text[start : end + 1])
+    # First complete object, not first-brace-to-last-brace: a model that
+    # answers with two objects, or with prose containing braces after the
+    # decision, used to make the whole step unparseable.
+    try:
+        decision, _ = json.JSONDecoder().raw_decode(text[start:])
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"model returned no valid JSON object: {text[:200]!r}") from exc
     if not isinstance(decision, dict) or "action" not in decision:
         raise ValueError(f"decision must contain an action field: {decision!r}")
     if decision["action"] == "click" and not (
@@ -87,7 +109,13 @@ def _parse_decision(text: str) -> dict:
         if not isinstance(props, list) or not props:
             raise ValueError("read requires a non-empty props list")
         decision["props"] = [str(item) for item in props]
-    if decision["action"] not in {"click", "fill", "press", "scroll", "read", "done"}:
+    if decision["action"] in {"trace", "watch", "arm", "collect"}:
+        if not decision.get("selector") or not decision.get("prop"):
+            raise ValueError(f"{decision['action']} requires selector and prop")
+    if decision["action"] not in {
+        "click", "fill", "press", "scroll", "read",
+        "trace", "watch", "arm", "collect", "done",
+    }:
         raise ValueError(f"unknown action: {decision['action']!r}")
     return decision
 
@@ -112,6 +140,72 @@ _READ_JS = """([selector, props]) => {
     out[prop] = value === undefined ? null : value;
   }
   return out;
+}"""
+
+
+# Arm once, collect on every later call. Both keep their records on the page
+# rather than in the agent, because the interesting events happen between two
+# agent steps — during a click, while a turn commits — and nothing on this side
+# is awake to see them.
+#
+# The split matters: an assignment has a stack and names its culprit, while a
+# value can also be reset with nobody assigning anything (a node re-attached,
+# a relayout). Those leave no stack and only sampling sees them, which is
+# exactly the case that took the longest to find by hand.
+_TRACE_JS = r"""([selector, prop, limit]) => {
+  const el = document.querySelector(selector);
+  if (!el) return {error: "selector matched nothing"};
+  const store = (window.__vcoTrace = window.__vcoTrace || {});
+  const key = selector + "::" + prop;
+  if (store[key]) {
+    const caught = store[key].hits.splice(0);
+    return {armed: true, hits: caught};
+  }
+  const proto = Object.getPrototypeOf(el);
+  const desc = Object.getOwnPropertyDescriptor(proto, prop)
+            || Object.getOwnPropertyDescriptor(Element.prototype, prop);
+  if (!desc || !desc.set) return {error: "property is not settable: " + prop};
+  const hits = [];
+  store[key] = {hits: hits};
+  Object.defineProperty(el, prop, {
+    configurable: true,
+    get(){ return desc.get.call(this) },
+    set(value){
+      if (hits.length < limit) {
+        const stack = (new Error().stack || "").split("\n").slice(2, 5)
+          .map(line => line.trim().replace(/^at /, ""));
+        hits.push({from: Math.round(desc.get.call(this)),
+                   to: Math.round(value), at: Date.now(), stack: stack});
+      }
+      desc.set.call(this, value);
+    }
+  });
+  return {armed: true, hits: []};
+}"""
+
+_WATCH_JS = r"""([selector, prop, limit, threshold]) => {
+  const el = document.querySelector(selector);
+  if (!el) return {error: "selector matched nothing"};
+  const store = (window.__vcoWatch = window.__vcoWatch || {});
+  const key = selector + "::" + prop;
+  if (store[key]) {
+    const caught = store[key].jumps.splice(0);
+    return {armed: true, jumps: caught};
+  }
+  const jumps = [];
+  let previous = el[prop];
+  const timer = setInterval(() => {
+    const now = el[prop];
+    if (typeof now === "number" && Math.abs(now - previous) > threshold
+        && jumps.length < limit) {
+      jumps.push({from: Math.round(previous), to: Math.round(now),
+                  at: Date.now(), scrollHeight: el.scrollHeight,
+                  clientHeight: el.clientHeight});
+    }
+    previous = now;
+  }, 16);
+  store[key] = {jumps: jumps, timer: timer};
+  return {armed: true, jumps: []};
 }"""
 
 
@@ -153,6 +247,9 @@ def run(
     hold: float = 0.0,
     record: bool = False,
     artifact_dir: Path | None = None,
+    system_prompt: str = SYSTEM_PROMPT,
+    typing: bool = False,
+    extra_context=None,
 ) -> WebRunResult:
     sync_playwright = _load_pw()
     log = _PageLog()
@@ -172,17 +269,27 @@ def run(
         try:
             for step in range(1, max_steps + 1):
                 tree = page.locator("body").aria_snapshot()
+                # The accessibility tree carries roles and text and no
+                # selectors at all, so a caller whose actions are addressed by
+                # selector has to supply that half itself.
+                extra = ""
+                if extra_context is not None:
+                    try:
+                        extra = extra_context(page) or ""
+                    except Exception as exc:  # noqa: BLE001 - context is best-effort
+                        extra = f"(context unavailable: {exc})\n"
                 prompt = (
                     f"Task: {task}\n"
                     f"Step: {step}/{max_steps}\n"
                     f"Page URL: {page.url}\n"
+                    f"{extra}"
                     f"Accessibility tree:\n{tree[:6000]}\n"
                     f"Console errors: {json.dumps(log.console_errors[:5], ensure_ascii=False)}\n"
                     f"Page errors: {json.dumps(log.page_errors[:5], ensure_ascii=False)}\n"
                     f"Previous actions: {json.dumps(history, ensure_ascii=False)}\n"
                     "Return the next action JSON."
                 )
-                raw = provider.chat(prompt, system=SYSTEM_PROMPT)
+                raw = provider.chat(prompt, system=system_prompt)
                 try:
                     decision = _parse_decision(raw)
                 except ValueError as exc:
@@ -226,10 +333,14 @@ def run(
                                 page.wait_for_timeout(900)
                         locator.first.click()
                 elif decision["action"] == "fill":
+                    # Character by character when asked, not just when a human
+                    # is watching: typing speed is itself a variable — debounce,
+                    # input handlers and autocomplete all behave differently for
+                    # a value that appears at once.
                     errors = _apply_fills(
                         page,
                         [f'{decision["placeholder"]}={decision["text"]}'],
-                        visible=not headless,
+                        visible=typing or not headless,
                     )
                     error = errors[0] if errors else None
                 elif decision["action"] == "press":
@@ -243,6 +354,30 @@ def run(
                         page.keyboard.press(decision["key"])
                 elif decision["action"] == "scroll":
                     error = _wheel(page, decision.get("selector"), decision["dy"])
+                elif decision["action"] in {"trace", "watch", "arm", "collect"}:
+                    # arm and collect are the same pair of calls; which one it
+                    # is depends only on whether they have run before. Asking
+                    # the model to choose between trace and watch was a way to
+                    # get the wrong one — it picked watch for a bug that had a
+                    # perfectly good stack waiting in trace.
+                    wanted = {"trace": [_TRACE_JS], "watch": [_WATCH_JS]}.get(
+                        decision["action"], [_TRACE_JS, _WATCH_JS]
+                    )
+                    caught: dict = {}
+                    for js in wanted:
+                        args = [decision["selector"], decision["prop"], 40]
+                        if js is _WATCH_JS:
+                            args.append(30)   # ignore sub-30px settling noise
+                        try:
+                            got = page.evaluate(js, args)
+                        except Exception as exc:  # noqa: BLE001 - reported, not raised
+                            got = {"error": f"{exc}"}
+                        if got.get("error") and len(wanted) == 1:
+                            error = got["error"]
+                        caught.update(
+                            {k: v for k, v in got.items() if k != "armed"}
+                        )
+                    entry["value"] = caught or None
                 elif decision["action"] == "read":
                     try:
                         # Straight into the record: what was read is the whole

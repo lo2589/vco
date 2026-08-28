@@ -1,0 +1,73 @@
+<!doctype html><meta charset="utf-8"><title>Scroll bug fixture</title>
+<!--
+  A target for `vco webdebug`, with three ways of losing your scroll position.
+  Two of them look identical from outside and are found by different halves of
+  `arm`, which is the reason both halves exist:
+
+    Refresh list   assigns scrollTop = 0 after rebuilding. An assignment, so
+                   trace catches it with the stack that did it.
+    Relayout       detaches the node and puts it straight back. scrollTop
+                   resets with nobody assigning anything and no stack exists;
+                   only the sampler sees this one.
+    Send           the case this was built from: sending a message rebuilds
+                   the transcript and throws away where you were reading.
+
+  Serve it and point the agent at it:
+    python3 -m http.server 8772 --bind 127.0.0.1
+    vco webdebug http://127.0.0.1:8772/examples/scroll_bug_fixture.html \
+      --task "I scrolled down to read, hit Refresh list, and it jumped to the top" \
+      --provider ollama --model qwen3.6:latest
+-->
+<style>
+ body{font:14px system-ui;padding:20px}
+ #log{height:220px;overflow:auto;border:1px solid #ccc;padding:8px;margin:12px 0}
+ button{padding:6px 12px;margin-right:8px}
+</style>
+<h1>Scroll bug fixture</h1>
+<div id="log"></div>
+<button id="refresh">Refresh list</button>
+<button id="relayout">Relayout</button>
+<div style="margin-top:12px">
+  <input id="say" placeholder="say something" style="padding:6px;width:260px">
+  <button id="send">Send</button>
+</div>
+<script>
+  const log = document.getElementById("log");
+  function rows(){
+    let html = "";
+    for (let i = 1; i <= 120; i++) html += "<div>row " + i + "</div>";
+    return html;
+  }
+  log.innerHTML = rows();
+  log.scrollTop = log.scrollHeight;
+
+  // Bug 1: rebuilds the list and then explicitly sends the pane to the top.
+  // An assignment, so it has a stack.
+  function rebuildList(){
+    log.innerHTML = rows();
+    log.scrollTop = 0;
+  }
+  document.getElementById("refresh").onclick = rebuildList;
+
+  // Bug 3: the one that started all this. Sending appends the message and
+  // then rebuilds, and the rebuild loses where you were reading.
+  function sendMessage(){
+    const text = document.getElementById("say").value;
+    if (!text) return;
+    log.innerHTML = rows() + "<div><b>you: " + text + "</b></div>";
+    log.scrollTop = 0;                    // wrong: should stay, or go to the end
+    document.getElementById("say").value = "";
+  }
+  document.getElementById("send").onclick = sendMessage;
+  document.getElementById("say").addEventListener("keydown", function (event) {
+    if (event.key === "Enter") sendMessage();
+  });
+
+  // Bug 2: detaches and re-inserts the same node. scrollTop resets with
+  // nobody assigning anything, so there is no stack to find.
+  document.getElementById("relayout").onclick = function detachAndReinsert(){
+    const parent = log.parentNode, next = log.nextSibling;
+    parent.removeChild(log);
+    parent.insertBefore(log, next);
+  };
+</script>
