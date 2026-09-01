@@ -20,7 +20,7 @@ def main():
         outline=(190, 200, 212),
         width=2,
     )
-    draw.text((110, 95), "Visual Computer Operate - Demo", fill=(25, 35, 48))
+    draw.text((110, 95), "vco - Demo", fill=(25, 35, 48))
     for index, label in enumerate(("Open project", "Run task", "Review result")):
         y = 165 + index * 88
         draw.rounded_rectangle(

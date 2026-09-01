@@ -1,8 +1,9 @@
-# Visual Computer Operate (vco)
+# vco — visual computer operate for LLMs
 
+[![PyPI](https://img.shields.io/pypi/v/vco.svg)](https://pypi.org/project/vco/)
 [中文文档](README_zh.md)
 
-A clicker for LLMs: lets any agent that can run shell commands and read JSON operate web pages and desktop screens.
+`vco` is a clicker for LLMs: it lets any agent that can run shell commands and read JSON operate web pages and desktop screens.
 
 Two channels, deterministic-first, vision models only as fallback:
 
@@ -42,6 +43,12 @@ vco shot                          # screenshot; --region x,y,w,h for a sub-regio
                                   # coordinates are always global logical pixels, ready for click
 vco find --target "CODEX"         # locate (dry-run): OCR first, draws a translucent red circle on hit
 vco click --at 1164,92            # real mouse click; click --target "..." locates first
+vco type --target "Username" --text alice
+                                  # locate a text field and type into it; --paste uses the clipboard
+vco type --target "Password" --text-env PASSWORD
+                                  # read the secret from an env var so it never enters shell history
+vco fill --field "Username=alice" --field "Password=secret" --target "Sign in"
+                                  # fill multiple fields, then click the submit button; use --paste for CJK
 vco ask [image] --provider ollama --model minicpm-v4.6:latest
                                   # ask a vision model "what's in this image"; captures the screen if no image
 ```
@@ -64,7 +71,7 @@ Key `find`/`click` JSON fields: `found` (exit code 2 when false — a normal out
 
 `ask` supports four providers: `ollama` (local, default `127.0.0.1:11434`), `minimax` and `glm` (need `--minimax-settings` / `--glm-settings` pointing at a JSON file with an api_key), and `openai`. Use `--question` to customize.
 
-Full usage instructions (including safety rules and failure handling) are packaged as a tool-agnostic agent skill: [`skills/operate-screen/SKILL.md`](skills/operate-screen/SKILL.md) — drop it into any agent's skills directory. This repo's `.kimi-code/skills/operate-screen` is a symlink to it, and `plugins/visual-computer-operate/` is the Codex MCP packaging.
+Full usage instructions (including safety rules and failure handling) are packaged as a tool-agnostic agent skill: [`skills/operate-screen/SKILL.md`](skills/operate-screen/SKILL.md) — drop it into any agent's skills directory. This repo's `.kimi-code/skills/operate-screen` is a symlink to it, and `plugins/vco/` is the Codex MCP packaging.
 
 ## Debugging a front-end bug
 
@@ -101,7 +108,7 @@ It drives the page like a person: real clicks, a real wheel, and text typed one 
 
 ## MCP Server
 
-Zero-dependency stdio MCP server: `python3 -m vco.mcp_server` (plugin config in `plugins/visual-computer-operate/.mcp.json`). Exposes 8 tools:
+Zero-dependency stdio MCP server: `python3 -m vco.mcp_server` (plugin config in `plugins/vco/.mcp.json`). Exposes 8 tools:
 
 - `web_snapshot` / `web_screenshot` / `web_click` / `web_run`: the headless web channel (aria-tree perception, screenshots, DOM clicks, agent loop) — no model required, or a text model for the loop;
 - `screen_probe` / `screen_run`: the desktop channel (GLM/MiniMax vision models + grid zoom); requires `VCO_GLM_SETTINGS` / `VCO_MINIMAX_SETTINGS` env vars pointing at settings files;
@@ -113,13 +120,65 @@ Any MCP-capable agent (Codex, Claude Code, Kimi, ...) can call these directly.
 
 Requires Python 3.9+.
 
+### From PyPI (recommended)
+
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e '.[control,ocr,browser]'   # control=real mouse (pyautogui), ocr=RapidOCR, browser=Playwright
+pip install 'vco[control,ocr,browser]'
 ```
 
-Minimal installs: `pip install -e .` is core-only; `.[openai]` adds the OpenAI provider; `.[browser]` also needs `playwright install chromium` (skip if a local Chromium cache already exists). On first macOS run, grant **Screen Recording** and **Accessibility** to your terminal in System Settings → Privacy & Security.
+- `control` — real mouse control via `pyautogui`
+- `ocr` — local OCR via `RapidOCR`
+- `browser` — headless Chromium via `playwright` (also run `playwright install chromium`)
+
+Minimal installs:
+
+```bash
+pip install vco              # core only: screenshot, grid, coordinate math
+pip install 'vco[openai]'    # plus OpenAI-compatible provider
+pip install 'vco[browser]'   # plus Playwright; still needs `playwright install chromium`
+```
+
+### From GitHub
+
+```bash
+git clone https://github.com/lo2589/vco.git
+cd vco
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e '.[control,ocr,browser]'
+```
+
+### First run on macOS
+
+`vco` needs **Screen Recording** and **Accessibility** permissions. The first time a command touches the screen or mouse, macOS will prompt you. If it fails silently, go to **System Settings → Privacy & Security → Screen Recording / Accessibility** and add your terminal (or host app).
+
+## Provider settings
+
+Cloud providers (`minimax`, `glm`) read API keys from JSON files so keys never enter the repo or shell history. Copy the examples and fill in your keys:
+
+```bash
+cp examples/provider_settings.minimax.json.example provider_settings.minimax.json
+cp examples/provider_settings.glm.json.example provider_settings.glm.json
+```
+
+`provider_settings.minimax.json`:
+
+```json
+{
+  "api_key": "YOUR_MINIMAX_API_KEY_HERE"
+}
+```
+
+`provider_settings.glm.json`:
+
+```json
+{
+  "api_key": "YOUR_GLM_API_KEY_HERE",
+  "base_url": "https://open.bigmodel.cn/api/paas/v4/"
+}
+```
+
+The benchmark harness (`debug/run_web_ui_matrix.py`) also looks for `provider_settings.deepseek.json` in the settings directory; see `examples/provider_settings.deepseek.json.example` for that format. All `provider_settings.*.json` files are ignored by `.gitignore` so real keys cannot be committed by accident.
 
 ## How the desktop grid works
 
@@ -284,7 +343,7 @@ Also supports manual input (`--provider manual`), JSONL replay, and the OpenAI p
 
 Good at: clicking clear buttons, cards, and icons; coarse selection inside bounded regions; simple straight-line drags; low-cost local Computer-Use proofs of concept; acting as a "visual probe" for agents (screenshot, locate, verify).
 
-Not yet reliable or unsupported: text-dense UIs, very small or visually similar controls; fast-disappearing menus, heavy animation, low-latency reactions; keyboard input, scrolling, multi-point curves, complex drawing; precise dragging; autonomously understanding long tasks (small models may misfire `done` — always set max steps); safely executing payments, deletions, message sending, and other high-risk operations.
+Not yet reliable or unsupported: text-dense UIs, very small or visually similar controls; fast-disappearing menus, heavy animation, low-latency reactions; scrolling, multi-point curves, complex drawing; precise dragging; autonomously understanding long tasks (small models may misfire `done` — always set max steps); safely executing payments, deletions, message sending, and other high-risk operations.
 
 ## Safety design
 
@@ -293,7 +352,7 @@ Not yet reliable or unsupported: text-dense UIs, very small or visually similar 
 - All actions are confined to the user-specified region.
 - Model JSON is validated against a strict schema; illegal offsets are never silently corrected.
 - `--max-steps` prevents infinite loops.
-- The action set contains no shell, file operations, keyboard input, or arbitrary tool calls.
+- The action set contains no shell, file operations, or arbitrary tool calls; `type`/`fill` use the keyboard only to enter user-supplied text into located input fields.
 - Every step saves the clean image, grid image, zoom images, model action, and local resolution.
 - Ollama defaults to `127.0.0.1:11434`; images never leave the machine with that provider.
 - Real execution uses pyautogui with the top-left-corner fail-safe enabled: slam the mouse into the main screen's top-left corner to emergency-stop.

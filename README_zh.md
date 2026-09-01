@@ -1,8 +1,9 @@
-# Visual Computer Operate (vco)
+# vco — 面向 LLM 的视觉/网页操作点击器
 
+[![PyPI](https://img.shields.io/pypi/v/vco.svg)](https://pypi.org/project/vco/)
 [English README](README.md)
 
-给 LLM 用的点击器：让任何会跑 shell 命令、会读 JSON 的 agent 操作网页和桌面。
+`vco` 是一个给 LLM 用的点击器：让任何会跑 shell 命令、会读 JSON 的 agent 操作网页和桌面。
 
 两条通道，确定性优先，视觉模型只兜底：
 
@@ -39,6 +40,12 @@ vco shot                          # 截图；--region x,y,w,h 截局部；--disp
                                   # 输出坐标始终是全局逻辑坐标，click 直接可用
 vco find --target "CODEX"         # 定位（dry-run）：OCR 优先，命中点画半透明红圈
 vco click --at 1164,92            # 真实点击坐标；click --target "..." 则先定位再点
+vco type --target "用户名" --text alice
+                                  # 定位输入框并打字；中文等用 --paste 走剪贴板
+vco type --target "密码" --text-env PASSWORD
+                                  # 从环境变量读密码，避免进 shell history
+vco fill --field "用户名=alice" --field "密码=secret" --target "登录"
+                                  # 填多个字段，再点击提交按钮；加 --paste 适合中文
 vco ask [图片] --provider ollama --model minicpm-v4.6:latest
                                   # 问视觉模型"图里有什么"；不传图片则先截屏
 ```
@@ -61,7 +68,7 @@ shot            再截图验证界面真的变了
 
 `ask` 支持四个 provider：`ollama`（本地，默认 `127.0.0.1:11434`）、`minimax` 和 `glm`（需 `--minimax-settings` / `--glm-settings` 指向含 api_key 的 JSON）、`openai`。可用 `--question` 自定义问题。
 
-完整的使用说明（含安全规则和失败处理）写成了工具无关的 agent skill：[`skills/operate-screen/SKILL.md`](skills/operate-screen/SKILL.md)，可直接接入各 agent 的 skills 目录；本仓库的 `.kimi-code/skills/operate-screen` 是指向它的软链，`plugins/visual-computer-operate/` 是给 Codex 的 MCP 版本。
+完整的使用说明（含安全规则和失败处理）写成了工具无关的 agent skill：[`skills/operate-screen/SKILL.md`](skills/operate-screen/SKILL.md)，可直接接入各 agent 的 skills 目录；本仓库的 `.kimi-code/skills/operate-screen` 是指向它的软链，`plugins/vco/` 是给 Codex 的 MCP 版本。
 
 ## 调前端 bug
 
@@ -98,7 +105,7 @@ vco webdebug http://127.0.0.1:8772/ \
 
 ## MCP Server
 
-零依赖 stdio MCP server：`python3 -m vco.mcp_server`（插件配置见 `plugins/visual-computer-operate/.mcp.json`）。暴露 8 个工具：
+零依赖 stdio MCP server：`python3 -m vco.mcp_server`（插件配置见 `plugins/vco/.mcp.json`）。暴露 8 个工具：
 
 - `web_snapshot` / `web_screenshot` / `web_click` / `web_run`：网页无头通道（aria 树感知、截图、DOM 点击、agent 闭环），无需模型或配文本模型；
 - `screen_probe` / `screen_run`：桌面屏幕通道（GLM/MiniMax 视觉模型 + 网格变焦），需 `VCO_GLM_SETTINGS` / `VCO_MINIMAX_SETTINGS` 环境变量指向 settings 文件；
@@ -110,13 +117,37 @@ vco webdebug http://127.0.0.1:8772/ \
 
 要求 Python 3.9+。
 
+### 从 PyPI 安装（推荐）
+
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e '.[control,ocr,browser]'   # control=真实鼠标(pyautogui)，ocr=RapidOCR，browser=Playwright
+pip install 'vco[control,ocr,browser]'
 ```
 
-按需裁剪：`pip install -e .` 只有核心；`.[openai]` 是 OpenAI provider；`.[browser]` 装完还需 `playwright install chromium`（本机已有 Chromium 缓存则跳过）。macOS 首次运行需要在"系统设置 → 隐私与安全性"中为终端开启**屏幕录制**和**辅助功能**。
+- `control` — 真实鼠标控制（pyautogui）
+- `ocr` — 本地 OCR（RapidOCR）
+- `browser` — 无头 Chromium（Playwright），装完后还要运行 `playwright install chromium`
+
+按需裁剪：
+
+```bash
+pip install vco              # 只有核心：截图、网格、坐标换算
+pip install 'vco[openai]'    # 增加 OpenAI 兼容 provider
+pip install 'vco[browser]'   # 增加 Playwright；仍需 `playwright install chromium`
+```
+
+### 从 GitHub 源码安装
+
+```bash
+git clone https://github.com/lo2589/vco.git
+cd vco
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e '.[control,ocr,browser]'
+```
+
+### macOS 首次运行
+
+`vco` 需要 **屏幕录制** 和 **辅助功能** 权限。首次执行触屏/鼠标命令时 macOS 会弹窗提示；如果失败，去 **系统设置 → 隐私与安全性 → 屏幕录制 / 辅助功能**，把终端（或宿主 app）加进去。
 
 ## 工作方式
 
@@ -281,7 +312,7 @@ vco convert --region 100,200,1200,800 --rows 10 --cols 10 \
 
 适合：较明显的按钮、卡片、图标点击；受限区域内的粗粒度选择；简单两点直线拖拽；本地低成本 Computer-Use 概念验证；给 agent 当"视觉探针"（截图、定位、验证）。
 
-暂不可靠或尚未支持：文字密集、控件非常小或视觉相似度很高的界面；菜单快速消失、动画频繁、需要低延迟反应的操作；键盘输入、滚动、多点曲线和复杂绘画；精确拖拽；自动理解任意长任务（小模型可能误判 `done`，必须设最大轮数）；安全执行付款、删除数据、发送消息等高风险操作。
+暂不可靠或尚未支持：文字密集、控件非常小或视觉相似度很高的界面；菜单快速消失、动画频繁、需要低延迟反应的操作；滚动、多点曲线和复杂绘画；精确拖拽；自动理解任意长任务（小模型可能误判 `done`，必须设最大轮数）；安全执行付款、删除数据、发送消息等高风险操作。
 
 ## 安全设计
 
@@ -290,7 +321,7 @@ vco convert --region 100,200,1200,800 --rows 10 --cols 10 \
 - 所有动作限制在用户指定的目标区域内。
 - 模型 JSON 使用严格 schema 校验，非法偏移不会被静默修正。
 - `--max-steps` 防止闭环无限运行。
-- 动作集合不包含 shell、文件操作、键盘输入或任意工具调用。
+- 动作集合不包含 shell、文件操作或任意工具调用；`type`/`fill` 仅将用户提供的文字填入已定位的输入框。
 - 每轮保存干净图、网格图、变焦图、模型动作和本地解析结果。
 - Ollama 默认连接 `127.0.0.1:11434`，图片不发送给云端。
 - 真实执行使用 pyautogui，左上角 fail-safe 保持开启：紧急停止时把鼠标快速移到主屏幕左上角。
