@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "visual-computer-operate"
-version = "0.1.0"
-description = "A numbered-grid visual computer-use prototype"
+name = "vco"
+version = "0.1.7"
+description = "A clicker for LLMs: operate web pages and desktop screens via shell commands."
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
