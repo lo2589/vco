@@ -5,7 +5,7 @@ description: Locate, click, and repeatedly operate visible controls inside an ex
 
 # Operate Screen
 
-Use the `visual-computer-operate` MCP tools. Keep every capture and action inside the user-provided region.
+Use the `vco` MCP tools. Keep every capture and action inside the user-provided region.
 
 ## Workflow
 

@@ -11,3 +11,17 @@ cache/
 .screenshot/
 docs/
 .readme*
+
+# CDD / local analysis artifacts
+.codedendrite/
+.code_genome_db.json
+.codedendrite_ignore
+
+# Provider API settings containing real keys
+provider_settings.*.json
+*.minimax.json
+*.glm.json
+*.deepseek.json
+*.openai.json
+!*.json.example
+.*

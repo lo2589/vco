@@ -22,13 +22,13 @@ ROWS_URL = (
 
 
 def _get_json(url: str) -> dict:
-    request = Request(url, headers={"User-Agent": "visual-computer-operate/0.1"})
+    request = Request(url, headers={"User-Agent": "vco/0.1.5"})
     with urlopen(request, timeout=120) as response:
         return json.loads(response.read().decode("utf-8"))
 
 
 def _download(url: str, destination: Path) -> None:
-    request = Request(url, headers={"User-Agent": "visual-computer-operate/0.1"})
+    request = Request(url, headers={"User-Agent": "vco/0.1.5"})
     with urlopen(request, timeout=120) as response:
         destination.write_bytes(response.read())
 

@@ -30,8 +30,7 @@ from vco.providers import GLMProvider, MiniMaxProvider, OllamaProvider
 
 
 DEFAULT_SETTINGS_DIR = Path(
-    "/Users/a1/Workspace/PROJECTSPACE/para-llm-for-vscode-main/"
-    "paper_bentch/data"
+    os.environ.get("VCO_BENCHMARK_SETTINGS_DIR", "settings")
 )
 
 
@@ -263,6 +262,11 @@ def main() -> None:
     args = parser.parse_args()
 
     selected = {item.strip() for item in args.providers.split(",") if item.strip()}
+    if not args.settings_dir.is_dir():
+        raise SystemExit(
+            f"settings directory does not exist: {args.settings_dir}\n"
+            "Set --settings-dir or the VCO_BENCHMARK_SETTINGS_DIR env var."
+        )
     providers = build_providers(args.settings_dir, selected)
     manifest = json.loads((args.root / "manifest.json").read_text(encoding="utf-8"))
     if args.limit_cases:
