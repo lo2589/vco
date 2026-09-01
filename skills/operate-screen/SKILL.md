@@ -11,8 +11,8 @@ whenToUse: 用户要求观察屏幕、定位界面元素、点击按钮或验证
 ## 安装
 
 ```bash
-pip install -e '.[control,ocr]'           # control=真实鼠标(pyautogui)，ocr=RapidOCR
-pip install playwright && playwright install chromium   # 仅 webshot 需要
+pip install 'vco[control,ocr]'            # control=真实鼠标(pyautogui)，ocr=RapidOCR
+pip install 'vco[browser]' && playwright install chromium   # 仅 webshot 需要
 ```
 
 ## 命令
