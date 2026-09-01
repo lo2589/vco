@@ -13,6 +13,7 @@ from PIL import Image, ImageDraw, ImageGrab
 
 from .adaptive_zoom import AdaptiveZoomProvider
 from .capture import PillowScreenCapture
+from .diff import make_diff_image, verify_target_stable
 from .executor import (
     DryRunExecutor,
     PyAutoGuiExecutor,
@@ -198,7 +199,7 @@ def _add_provider_args(parser, *, default="manual"):
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="vco",
-        description="Numbered-grid visual computer-use prototype",
+        description="A clicker for LLMs: operate web pages and desktop screens via shell commands.",
     )
     commands = parser.add_subparsers(dest="command", required=True)
 
@@ -301,8 +302,71 @@ def build_parser() -> argparse.ArgumentParser:
     click.add_argument("--region", type=_region, help="x,y,width,height; default full screen")
     click.add_argument("--display", type=int, default=1, help="display index; 1 = main (default)")
     click.add_argument("--dir", type=Path, default=Path(".screenshot"))
+    click.add_argument(
+        "--no-click-trace",
+        action="store_true",
+        help="do not save a post-click screenshot with a marker",
+    )
+    click.add_argument(
+        "--no-verify",
+        action="store_true",
+        help="skip the pre-click region-stability check",
+    )
+    click.add_argument(
+        "--verify-threshold",
+        type=float,
+        default=0.8,
+        help="minimum pixel similarity for the target region (default 0.8)",
+    )
     _add_provider_args(click, default="none")
     _add_grid_args(click)
+
+    type_cmd = commands.add_parser(
+        "type", help="locate a text field and type/paste text into it"
+    )
+    type_cmd.add_argument("--target", required=True, help="field label to locate via OCR")
+    type_cmd.add_argument("--text", help="text to input")
+    type_cmd.add_argument(
+        "--text-env",
+        help="environment variable containing the text (safer than --text for secrets)",
+    )
+    type_cmd.add_argument(
+        "--paste",
+        action="store_true",
+        help="paste from clipboard instead of simulating keystrokes",
+    )
+    type_cmd.add_argument("--region", type=_region, help="x,y,width,height; default full screen")
+    type_cmd.add_argument("--display", type=int, default=1, help="display index; 1 = main (default)")
+    type_cmd.add_argument("--dir", type=Path, default=Path(".screenshot"))
+    type_cmd.add_argument(
+        "--settle", type=float, default=0.3, help="seconds to wait after focus click before typing"
+    )
+    _add_provider_args(type_cmd, default="none")
+    _add_grid_args(type_cmd)
+
+    fill = commands.add_parser(
+        "fill", help="fill multiple form fields, then optionally click a submit button"
+    )
+    fill.add_argument(
+        "--field",
+        action="append",
+        required=True,
+        help="label=text pair to fill, e.g. --field 用户名=alice (can be repeated)",
+    )
+    fill.add_argument("--target", help="submit button text to click after filling")
+    fill.add_argument(
+        "--paste",
+        action="store_true",
+        help="paste values instead of simulating keystrokes",
+    )
+    fill.add_argument("--region", type=_region, help="x,y,width,height; default full screen")
+    fill.add_argument("--display", type=int, default=1, help="display index; 1 = main (default)")
+    fill.add_argument("--dir", type=Path, default=Path(".screenshot"))
+    fill.add_argument(
+        "--settle", type=float, default=0.3, help="seconds to wait after each focus click"
+    )
+    _add_provider_args(fill, default="none")
+    _add_grid_args(fill)
 
     ask = commands.add_parser(
         "ask", help="ask a vision model a free-form question about an image"
@@ -732,6 +796,111 @@ def _mark_target(image: Image.Image, point: tuple[int, int]) -> Image.Image:
     return Image.alpha_composite(marked, overlay).convert("RGB")
 
 
+def _input_text(text: str, *, paste: bool = False) -> None:
+    """Type or paste ``text`` at the current keyboard focus."""
+
+    import pyautogui
+
+    if paste:
+        import pyperclip
+
+        pyperclip.copy(text)
+        if sys.platform == "darwin":
+            pyautogui.keyDown("command")
+            pyautogui.keyDown("v")
+            pyautogui.keyUp("v")
+            pyautogui.keyUp("command")
+        else:
+            pyautogui.keyDown("ctrl")
+            pyautogui.keyDown("v")
+            pyautogui.keyUp("v")
+            pyautogui.keyUp("ctrl")
+    else:
+        pyautogui.typewrite(text, interval=0.01)
+
+
+def _resolve_text_target(args, target_text: str, *, prefix: str):
+    """Locate ``target_text`` on screen and return the resolved click point + metadata.
+
+    This shares the same OCR-first / vision-model-fallback logic as ``click``,
+    but returns the data instead of clicking.
+    """
+
+    args.ocr_target = target_text
+    task = f"点击界面中的“{target_text}”"
+    args.dir.mkdir(parents=True, exist_ok=True)
+    stamp = _timestamp()
+    if args.image is not None:
+        with Image.open(args.image) as source:
+            clean = source.convert("RGB")
+        clean_path = args.image
+        region = args.region or Region(x=0, y=0, width=clean.width, height=clean.height)
+    else:
+        clean, region = _capture_for_args(args)
+        clean_path = args.dir / f"{prefix}-{stamp}.clean.png"
+        clean.save(clean_path)
+
+    grid = _grid(args)
+    gridded = render_numbered_grid(clean, grid)
+    provider = _provider(args)
+    try:
+        action = provider.choose_action(
+            task=task, clean=clean, gridded=gridded, grid=grid, step=1
+        )
+    except Exception as exc:
+        return {
+            "found": False,
+            "error": f"{type(exc).__name__}: {exc}",
+            "target": target_text,
+            "task": task,
+            "image": str(clean_path),
+        }
+
+    resolved = resolve_action(action, GridMapper(region, grid))
+    metadata = getattr(provider, "last_metadata", None)
+    method = "model"
+    if metadata and metadata.get("ocr_direct"):
+        method = "ocr"
+    elif metadata and "ocr_backend" in metadata:
+        method = "model+ocr-hints"
+
+    if resolved is None:
+        return {
+            "found": False,
+            "target": target_text,
+            "task": task,
+            "method": None,
+            "image": str(clean_path),
+            "model_action": action.model_dump(mode="json"),
+            "metadata": metadata,
+        }
+
+    marked = _mark_target(
+        clean, (resolved.start[0] - region.x, resolved.start[1] - region.y)
+    )
+    marked_path = args.dir / f"{prefix}-{stamp}.marked.png"
+    marked.save(marked_path)
+    return {
+        "found": True,
+        "x": resolved.start[0],
+        "y": resolved.start[1],
+        "method": method,
+        "target": target_text,
+        "task": task,
+        "image": str(clean_path),
+        "marked_image": str(marked_path),
+        "model_action": action.model_dump(mode="json"),
+        "zoom_trace": (
+            provider.last_trace.as_dict()
+            if getattr(provider, "last_trace", None) is not None
+            else None
+        ),
+        "metadata": metadata,
+        "_resolved": resolved,
+        "_region": region,
+    }
+
+
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "overlay":
@@ -832,7 +1001,15 @@ def main(argv=None) -> int:
         if args.command == "click" and args.at is not None:
             x, y = args.at
             PyAutoGuiExecutor().execute(ResolvedAction(type="click", start=(x, y)))
-            print(json.dumps({"clicked": True, "x": x, "y": y}, ensure_ascii=False))
+            record = {"clicked": True, "x": x, "y": y}
+            if not args.no_click_trace:
+                args.dir.mkdir(parents=True, exist_ok=True)
+                post, region = _capture_for_args(args)
+                trace_path = args.dir / f"click-{_timestamp()}.png"
+                marked = _mark_target(post, (x - region.x, y - region.y))
+                marked.save(trace_path)
+                record["click_trace"] = str(trace_path)
+            print(json.dumps(record, ensure_ascii=False))
             return 0
         if not args.target and not args.task:
             raise SystemExit(f"vco {args.command} requires --target TEXT or --task TEXT")
@@ -914,16 +1091,121 @@ def main(argv=None) -> int:
             and resolved is not None
             and resolved.type == "click"
         ):
+            if not args.no_verify and args.image is None:
+                fresh, fresh_region = _capture_for_args(args)
+                stable, similarity = verify_target_stable(
+                    clean,
+                    fresh,
+                    resolved.start,
+                    threshold=args.verify_threshold,
+                )
+                record["verified"] = stable
+                record["similarity"] = round(similarity, 4)
+                if not stable:
+                    diff_img = make_diff_image(
+                        clean, fresh, resolved.start
+                    )
+                    diff_path = args.dir / f"diff-{_timestamp()}.png"
+                    diff_img.save(diff_path)
+                    record["diff_image"] = str(diff_path)
+                    record["error"] = (
+                        f"target region changed before click "
+                        f"(similarity {similarity:.2%} < {args.verify_threshold:.0%})"
+                    )
+                    json_path.write_text(
+                        json.dumps(record, indent=2, ensure_ascii=False) + "\n",
+                        encoding="utf-8",
+                    )
+                    record["record"] = str(json_path)
+                    print(json.dumps(record, indent=2, ensure_ascii=False))
+                    return 2
             PyAutoGuiExecutor().execute(
                 ResolvedAction(type="click", start=resolved.start)
             )
             record["executed"] = True
+            if not args.no_click_trace:
+                post, region = _capture_for_args(args)
+                trace_path = args.dir / f"click-{_timestamp()}.png"
+                marked = _mark_target(
+                    post,
+                    (
+                        resolved.start[0] - region.x,
+                        resolved.start[1] - region.y,
+                    ),
+                )
+                marked.save(trace_path)
+                record["click_trace"] = str(trace_path)
         json_path.write_text(
             json.dumps(record, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
         )
         record["record"] = str(json_path)
         print(json.dumps(record, indent=2, ensure_ascii=False))
         return 0 if resolved is not None else 2
+
+    if args.command == "type":
+        text = args.text
+        if args.text_env:
+            text = os.environ.get(args.text_env)
+            if text is None:
+                raise SystemExit(f"environment variable {args.text_env!r} is not set")
+        if text is None:
+            raise SystemExit("vco type requires --text or --text-env")
+
+        result = _resolve_text_target(args, args.target, prefix="type")
+        if not result.get("found"):
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+            return 2
+
+        resolved = result.pop("_resolved")
+        PyAutoGuiExecutor().execute(ResolvedAction(type="click", start=resolved.start))
+        if args.settle:
+            time.sleep(args.settle)
+        _input_text(text, paste=args.paste)
+        result.update({"text_entered": True, "paste": args.paste})
+        json_path = args.dir / f"type-{_timestamp()}.json"
+        json_path.write_text(
+            json.dumps(result, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
+        result["record"] = str(json_path)
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+        return 0
+
+    if args.command == "fill":
+        fields = []
+        for raw in args.field:
+            if "=" not in raw:
+                raise SystemExit(f"--field must be label=text, got {raw!r}")
+            label, value = raw.split("=", 1)
+            fields.append((label, value))
+
+        filled = []
+        for label, value in fields:
+            result = _resolve_text_target(args, label, prefix="fill")
+            if not result.get("found"):
+                print(json.dumps({"filled": filled, "failed": result}, indent=2, ensure_ascii=False))
+                return 2
+            resolved = result.pop("_resolved")
+            PyAutoGuiExecutor().execute(ResolvedAction(type="click", start=resolved.start))
+            if args.settle:
+                time.sleep(args.settle)
+            _input_text(value, paste=args.paste)
+            filled.append({"label": label, "value": value, "point": resolved.start})
+
+        submit_result = None
+        if args.target:
+            submit_result = _resolve_text_target(args, args.target, prefix="submit")
+            if submit_result.get("found"):
+                resolved = submit_result.pop("_resolved")
+                PyAutoGuiExecutor().execute(ResolvedAction(type="click", start=resolved.start))
+
+        record = {"filled": filled, "submitted": args.target is not None, "submit": submit_result}
+        json_path = args.dir / f"fill-{_timestamp()}.json"
+        json_path.write_text(
+            json.dumps(record, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
+        record["record"] = str(json_path)
+        print(json.dumps(record, indent=2, ensure_ascii=False))
+        return 0
 
     if args.command == "ask":
         if args.image is not None:

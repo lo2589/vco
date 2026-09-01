@@ -1,4 +1,4 @@
-"""Numbered-grid visual computer operation prototype."""
+"""vco — a clicker for LLMs: operate web pages and desktop screens."""
 
 from .geometry import GridMapper
 from .models import Action, GridPoint, GridSpec, Region, parse_action
@@ -32,4 +32,4 @@ __all__ = [
     "register_ocr_backend",
 ]
 
-__version__ = "0.1.0"
+__version__ = "0.1.7"

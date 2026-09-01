@@ -1,4 +1,4 @@
-"""Zero-dependency stdio MCP server for Visual Computer Operate."""
+"""Zero-dependency stdio MCP server for vco."""
 
 from __future__ import annotations
 
@@ -565,7 +565,7 @@ def _dispatch(message: dict):
             "result": {
                 "protocolVersion": protocol,
                 "capabilities": {"tools": {"listChanged": False}},
-                "serverInfo": {"name": "visual-computer-operate", "version": "0.1.0"},
+                "serverInfo": {"name": "vco", "version": "0.1.5"},
             },
         }
     if method == "ping":
