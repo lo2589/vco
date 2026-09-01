@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -279,6 +280,42 @@ def build_parser() -> argparse.ArgumentParser:
         help="artifact directory (default: .screenshot under the current directory)",
     )
 
+    gridshot = commands.add_parser(
+        "gridshot", help="capture the screen and render a numbered grid over it"
+    )
+    gridshot.add_argument("--region", type=_region, help="x,y,width,height; default full screen")
+    gridshot.add_argument(
+        "--display", type=int, default=1, help="display index; 1 = main (default)"
+    )
+    gridshot.add_argument(
+        "--dir",
+        type=Path,
+        default=Path(".screenshot"),
+        help="artifact directory (default: .screenshot under the current directory)",
+    )
+    _add_grid_args(gridshot)
+
+    extendgrid = commands.add_parser(
+        "extendgrid", help="zoom into a grid cell and re-render a finer numbered grid"
+    )
+    extendgrid.add_argument("--clean", type=Path, required=True, help="previous gridshot clean image")
+    extendgrid.add_argument(
+        "--cell", type=int, required=True, help="cell number to zoom into"
+    )
+    extendgrid.add_argument(
+        "--from-rows", type=int, required=True, help="rows of the previous grid"
+    )
+    extendgrid.add_argument(
+        "--from-cols", type=int, required=True, help="cols of the previous grid"
+    )
+    extendgrid.add_argument(
+        "--dir",
+        type=Path,
+        default=Path(".screenshot"),
+        help="artifact directory (default: .screenshot under the current directory)",
+    )
+    _add_grid_args(extendgrid)
+
     find = commands.add_parser(
         "find",
         help="locate a target (OCR first, vision model fallback), mark it, never click",
@@ -324,7 +361,8 @@ def build_parser() -> argparse.ArgumentParser:
     type_cmd = commands.add_parser(
         "type", help="locate a text field and type/paste text into it"
     )
-    type_cmd.add_argument("--target", required=True, help="field label to locate via OCR")
+    type_cmd.add_argument("--target", help="field label to locate via OCR")
+    type_cmd.add_argument("--at", type=_point, help="click x,y directly, skip locating")
     type_cmd.add_argument("--text", help="text to input")
     type_cmd.add_argument(
         "--text-env",
@@ -335,6 +373,13 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="paste from clipboard instead of simulating keystrokes",
     )
+    type_cmd.add_argument(
+        "--press-enter",
+        type=int,
+        default=0,
+        help="press Enter N times after typing (useful for tag inputs)",
+    )
+    type_cmd.add_argument("--image", type=Path, help="use this image instead of capturing")
     type_cmd.add_argument("--region", type=_region, help="x,y,width,height; default full screen")
     type_cmd.add_argument("--display", type=int, default=1, help="display index; 1 = main (default)")
     type_cmd.add_argument("--dir", type=Path, default=Path(".screenshot"))
@@ -359,6 +404,13 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="paste values instead of simulating keystrokes",
     )
+    fill.add_argument(
+        "--press-enter",
+        type=int,
+        default=0,
+        help="press Enter N times after each field (useful for tag inputs)",
+    )
+    fill.add_argument("--image", type=Path, help="use this image instead of capturing")
     fill.add_argument("--region", type=_region, help="x,y,width,height; default full screen")
     fill.add_argument("--display", type=int, default=1, help="display index; 1 = main (default)")
     fill.add_argument("--dir", type=Path, default=Path(".screenshot"))
@@ -796,7 +848,7 @@ def _mark_target(image: Image.Image, point: tuple[int, int]) -> Image.Image:
     return Image.alpha_composite(marked, overlay).convert("RGB")
 
 
-def _input_text(text: str, *, paste: bool = False) -> None:
+def _input_text(text: str, *, paste: bool = False, press_enter: int = 0) -> None:
     """Type or paste ``text`` at the current keyboard focus."""
 
     import pyautogui
@@ -817,6 +869,8 @@ def _input_text(text: str, *, paste: bool = False) -> None:
             pyautogui.keyUp("ctrl")
     else:
         pyautogui.typewrite(text, interval=0.01)
+    for _ in range(press_enter):
+        pyautogui.press("return")
 
 
 def _resolve_text_target(args, target_text: str, *, prefix: str):
@@ -827,6 +881,8 @@ def _resolve_text_target(args, target_text: str, *, prefix: str):
     """
 
     args.ocr_target = target_text
+    if args.ocr_target and not getattr(args, "ocr_backend", None):
+        args.ocr_backend = "auto"
     task = f"点击界面中的“{target_text}”"
     args.dir.mkdir(parents=True, exist_ok=True)
     stamp = _timestamp()
@@ -997,6 +1053,79 @@ def main(argv=None) -> int:
         )
         return 0
 
+    if args.command == "gridshot":
+        clean, region = _capture_for_args(args)
+        grid = _grid(args)
+        gridded = render_numbered_grid(clean, grid)
+        args.dir.mkdir(parents=True, exist_ok=True)
+        stamp = _timestamp()
+        clean_path = args.dir / f"gridshot-{stamp}.clean.png"
+        grid_path = args.dir / f"gridshot-{stamp}.grid.png"
+        mapping_path = args.dir / f"gridshot-{stamp}.mapping.json"
+        clean.save(clean_path)
+        gridded.save(grid_path)
+        mapper = GridMapper(region, grid)
+        mapping = mapper.mapping_table()
+        mapping_path.write_text(
+            json.dumps(mapping, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
+        print(
+            json.dumps(
+                {
+                    "clean": str(clean_path),
+                    "grid": str(grid_path),
+                    "mapping": str(mapping_path),
+                    "region": region.model_dump(mode="json"),
+                },
+                ensure_ascii=False,
+            )
+        )
+        return 0
+
+    if args.command == "extendgrid":
+        with Image.open(args.clean) as source:
+            clean = source.convert("RGB")
+        # The previous grid must cover the clean image exactly.
+        prev_region = Region(x=0, y=0, width=clean.width, height=clean.height)
+        prev_grid = GridSpec(rows=args.from_rows, cols=args.from_cols)
+        prev_mapper = GridMapper(prev_region, prev_grid)
+        bounds = prev_mapper.cell_bounds(args.cell, screen=True)
+        local_bounds = prev_mapper.cell_bounds(args.cell, screen=False)
+        crop = clean.crop((local_bounds.left, local_bounds.top, local_bounds.right, local_bounds.bottom))
+        grid = _grid(args)
+        gridded = render_numbered_grid(crop, grid)
+        args.dir.mkdir(parents=True, exist_ok=True)
+        stamp = _timestamp()
+        clean_path = args.dir / f"extendgrid-{stamp}.clean.png"
+        grid_path = args.dir / f"extendgrid-{stamp}.grid.png"
+        mapping_path = args.dir / f"extendgrid-{stamp}.mapping.json"
+        crop.save(clean_path)
+        gridded.save(grid_path)
+        sub_region = Region(
+            x=bounds.left,
+            y=bounds.top,
+            width=bounds.width,
+            height=bounds.height,
+        )
+        mapper = GridMapper(sub_region, grid)
+        mapping = mapper.mapping_table()
+        mapping_path.write_text(
+            json.dumps(mapping, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
+        print(
+            json.dumps(
+                {
+                    "clean": str(clean_path),
+                    "grid": str(grid_path),
+                    "mapping": str(mapping_path),
+                    "region": sub_region.model_dump(mode="json"),
+                    "parent_cell": args.cell,
+                },
+                ensure_ascii=False,
+            )
+        )
+        return 0
+
     if args.command in ("find", "click"):
         if args.command == "click" and args.at is not None:
             x, y = args.at
@@ -1150,17 +1279,23 @@ def main(argv=None) -> int:
                 raise SystemExit(f"environment variable {args.text_env!r} is not set")
         if text is None:
             raise SystemExit("vco type requires --text or --text-env")
+        if args.at is None and args.target is None:
+            raise SystemExit("vco type requires --target TEXT or --at x,y")
 
-        result = _resolve_text_target(args, args.target, prefix="type")
-        if not result.get("found"):
-            print(json.dumps(result, indent=2, ensure_ascii=False))
-            return 2
-
-        resolved = result.pop("_resolved")
-        PyAutoGuiExecutor().execute(ResolvedAction(type="click", start=resolved.start))
+        if args.at is not None:
+            PyAutoGuiExecutor().execute(ResolvedAction(type="click", start=args.at))
+            result = {"found": True, "x": args.at[0], "y": args.at[1], "method": "direct"}
+        else:
+            result = _resolve_text_target(args, args.target, prefix="type")
+            if not result.get("found"):
+                print(json.dumps(result, indent=2, ensure_ascii=False))
+                return 2
+            resolved = result.pop("_resolved")
+            result.pop("_region", None)
+            PyAutoGuiExecutor().execute(ResolvedAction(type="click", start=resolved.start))
         if args.settle:
             time.sleep(args.settle)
-        _input_text(text, paste=args.paste)
+        _input_text(text, paste=args.paste, press_enter=getattr(args, "press_enter", 0))
         result.update({"text_entered": True, "paste": args.paste})
         json_path = args.dir / f"type-{_timestamp()}.json"
         json_path.write_text(
@@ -1185,10 +1320,11 @@ def main(argv=None) -> int:
                 print(json.dumps({"filled": filled, "failed": result}, indent=2, ensure_ascii=False))
                 return 2
             resolved = result.pop("_resolved")
+            result.pop("_region", None)
             PyAutoGuiExecutor().execute(ResolvedAction(type="click", start=resolved.start))
             if args.settle:
                 time.sleep(args.settle)
-            _input_text(value, paste=args.paste)
+            _input_text(value, paste=args.paste, press_enter=getattr(args, "press_enter", 0))
             filled.append({"label": label, "value": value, "point": resolved.start})
 
         submit_result = None
@@ -1196,6 +1332,7 @@ def main(argv=None) -> int:
             submit_result = _resolve_text_target(args, args.target, prefix="submit")
             if submit_result.get("found"):
                 resolved = submit_result.pop("_resolved")
+                submit_result.pop("_region", None)
                 PyAutoGuiExecutor().execute(ResolvedAction(type="click", start=resolved.start))
 
         record = {"filled": filled, "submitted": args.target is not None, "submit": submit_result}
