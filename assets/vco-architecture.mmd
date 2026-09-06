@@ -1,0 +1,42 @@
+%%{init: {'theme': 'dark', 'themeVariables': { 'primaryColor': '#2563a6', 'edgeLabelBackground':'#181a20', 'tertiaryColor': '#181a20'}}}%%
+flowchart LR
+    user(["LLM Agent / User"]) --> cli["vco CLI"]
+
+    subgraph WebChannel["Web Channel (headless, no real mouse)"]
+        direction TB
+        webtext["webtext"] --> hc["Headless<br/>Chromium"]
+        webclick["webclick"] --> hc
+        webrun["webrun"] --> hc
+        webdebug["webdebug"] --> hc
+        hc --> dom["DOM / aria tree"] --> da["DOM Actions"]
+    end
+
+    subgraph DesktopChannel["Desktop Channel (screenshot + real mouse)"]
+        direction TB
+        shot["shot / find"] --> screenshot["Screenshot"] --> ocr["OCR (RapidOCR)"] --> vision["Vision Model<br/>(grid / zoom)"] --> rm["Real Mouse<br/>/ Keyboard"]
+        clk["click / type / fill"] --> rm
+        runask["run / ask"] --> vision
+    end
+
+    output["JSON stdout + artifacts in .screenshot/ & cache/"]
+
+    cli --> WebChannel
+    cli --> DesktopChannel
+    da --> output
+    rm --> output
+
+    classDef web fill:#2563a6,stroke:#5cadff,color:#e6e6e6,stroke-width:2px
+    classDef desk fill:#2d8a4e,stroke:#5fd68a,color:#e6e6e6,stroke-width:2px
+    classDef neutral fill:#2c313c,stroke:#8a919c,color:#e6e6e6,stroke-width:2px
+    classDef user fill:#3b4252,stroke:#5b6375,color:#e6e6e6,stroke-width:2px
+    classDef out fill:#9a5b1f,stroke:#b87c32,color:#e6e6e6,stroke-width:2px
+    classDef panel fill:#1b2d3a,stroke:#5cadff,color:#5cadff,stroke-width:2px
+    classDef panel2 fill:#1b2f2a,stroke:#5fd68a,color:#5fd68a,stroke-width:2px
+
+    class webtext,webclick,webrun,webdebug,hc,dom,da web
+    class shot,clk,runask,screenshot,ocr,vision,rm desk
+    class cli neutral
+    class user user
+    class output out
+    class WebChannel panel
+    class DesktopChannel panel2

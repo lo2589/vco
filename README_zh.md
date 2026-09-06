@@ -10,6 +10,8 @@
 - **网页**：无头 Chromium 走 DOM——aria 树感知（文本模型可读）、按文字/选择器点击、填表、报错采集、录像，全程零视觉模型；
 - **桌面**：截图走 OCR 定位（唯一命中零模型调用），无文字目标才让视觉模型在编号网格上选格，本地程序负责坐标换算和真实鼠标。
 
+![vco 架构图](assets/vco-architecture.png)
+
 ## 命令一览
 
 stdout 始终是 JSON，产物默认写到**当前工作目录**的 `.screenshot/`（从哪个项目运行就存到哪个项目）。
@@ -69,6 +71,33 @@ shot            再截图验证界面真的变了
 `ask` 支持四个 provider：`ollama`（本地，默认 `127.0.0.1:11434`）、`minimax` 和 `glm`（需 `--minimax-settings` / `--glm-settings` 指向含 api_key 的 JSON）、`openai`。可用 `--question` 自定义问题。
 
 完整的使用说明（含安全规则和失败处理）写成了工具无关的 agent skill：[`skills/operate-screen/SKILL.md`](skills/operate-screen/SKILL.md)，可直接接入各 agent 的 skills 目录；本仓库的 `.kimi-code/skills/operate-screen` 是指向它的软链，`plugins/vco/` 是给 Codex 的 MCP 版本。
+
+## 为什么用 vco，而不是 OmniParser / UI-TARS / Qwen-Omni？
+
+这三者经常被人问起。它们各有所长；`vco` 的存在是因为，对于**由任意 LLM 驱动的、文字密集的网页和桌面 UI**，它们都不是最省钱、最可控的选择。
+
+| | OmniParser | UI-TARS | Qwen-Omni | vco |
+|---|---|---|---|---|
+| 本质 | 纯视觉 UI 解析器 | 端到端 GUI Agent 模型 + 运行时 | 通用多模态模型（视觉+音频+文本） | 可组合工具链：OCR、DOM/aria、可选视觉模型、真实鼠标键盘 |
+| 模型绑定 | 自带视觉模型 | 依赖 UI-TARS 权重 | 依赖通义千问系列 | **不绑定模型** —— 任何会调 shell/JSON 的 LLM 都能用 |
+| 感知方式 | 只看截图 | 只看截图 | 截图/上传图片 | **文字目标 OCR 优先**，网页走 DOM/aria，视觉模型仅兜底 |
+| 控制能力 | 只有感知 | 动作计划由框架执行 | 需要外部控制代码 | **内置控制**：`click`、`type`、`webclick`、`webrun` |
+| 成本/延迟 | 每张截图跑视觉模型 | 每步跑大模型 | 每次多模态调用 | **唯一文字命中零模型调用**；本地 OCR + 本地坐标换算 |
+| 最适合 | 无 API 的复杂桌面应用 | 零代码桌面自动化 | 通义生态内的多模态任务 | 网页自动化、文字密集桌面 UI、Agent 工具链、本地/离线场景 |
+
+### OmniParser
+
+OmniParser 把截图解析成可点击元素列表。它最适合**无文字、无 API** 的目标——裸图标、自定义绘制控件、游戏类 UI。对普通应用和网页它通常过重：读不了 DOM、分不清禁用状态、每帧都要跑视觉模型。`vco` 文字目标走 OCR，只有 OCR 失败时才付费调用视觉模型。
+
+### UI-TARS
+
+UI-TARS 更接近完整的零代码 Agent：给个目标，它自己规划并执行桌面动作。这对复杂的一次性桌面任务很强，但会把你和 UI-TARS 模型及运行时绑死。`vco` 相反：小型、可组合的 shell 原子能力，任何 Agent 框架都能编排、换模型、逐步调试。
+
+### Qwen-Omni
+
+Qwen-Omni 是通用多模态模型。它能看截图并建议动作，但不自带屏幕控制、坐标换算、重试逻辑。你仍然需要外围工具来截图、移动鼠标、处理未命中。`vco` 就是这个外围工具，同时保持自由：可以用 Qwen、GPT-4o、Claude 或本地模型当大脑。
+
+网页自动化、填表、验证渲染输出、本地 Computer-Use 概念验证，或把感知/控制接入你自己的 Agent —— `vco` 更小、更便宜、不绑模型。
 
 ## 调前端 bug
 
