@@ -10,6 +10,8 @@ Two channels, deterministic-first, vision models only as fallback:
 - **Web**: headless Chromium over the DOM — accessibility-tree perception (readable by text-only models), click by text/selector, form filling, error capture, video recording. No vision model involved at all.
 - **Desktop**: screenshot + OCR locating (a unique text hit needs zero model calls); only text-free targets fall back to a vision model picking cells on a numbered grid, while local code handles coordinate math and the real mouse.
 
+![vco architecture](assets/vco-architecture.png)
+
 ## Commands
 
 stdout is always JSON. Artifacts go to `.screenshot/` under the **current working directory** (whichever project you run it from).
@@ -72,6 +74,33 @@ Key `find`/`click` JSON fields: `found` (exit code 2 when false — a normal out
 `ask` supports four providers: `ollama` (local, default `127.0.0.1:11434`), `minimax` and `glm` (need `--minimax-settings` / `--glm-settings` pointing at a JSON file with an api_key), and `openai`. Use `--question` to customize.
 
 Full usage instructions (including safety rules and failure handling) are packaged as a tool-agnostic agent skill: [`skills/operate-screen/SKILL.md`](skills/operate-screen/SKILL.md) — drop it into any agent's skills directory. This repo's `.kimi-code/skills/operate-screen` is a symlink to it, and `plugins/vco/` is the Codex MCP packaging.
+
+## Why vco over other Computer-Use tools?
+
+There are three other approaches people often ask about. They are good at different things; `vco` exists because none of them is the cheapest, most controllable fit for **text-heavy web pages and desktop UIs driven by an arbitrary LLM**.
+
+| | OmniParser | UI-TARS | Qwen-Omni | vco |
+|---|---|---|---|---|
+| What it is | Pure-vision UI parser from a screenshot | End-to-end GUI-Agent model + runtime | General multimodal model (vision + audio + text) | Composable toolchain: OCR, DOM/aria, optional vision model, real mouse/keyboard |
+| Model lock-in | Owns a vision model | Tied to UI-TARS weights | Tied to Qwen family | **Model-agnostic** — any LLM that can call shell/JSON |
+| Perception | Screenshot only | Screenshot only | Screenshot / uploaded image | **OCR-first for text**, DOM/aria for web, vision only as fallback |
+| Control | Perception only | Action plans executed by framework | Needs external control code | **Built-in control**: `click`, `type`, `webclick`, `webrun` |
+| Cost / latency | Vision model per screenshot | Large model per step | Large multimodal call per step | **Zero model calls** for unique text targets; local OCR + local coordinate math |
+| Best for | Complex desktop apps with no API | Zero-code desktop automation | Multimodal tasks inside the Qwen ecosystem | Web automation, text-heavy desktop UIs, agent toolchains, local/offline setups |
+
+### OmniParser
+
+OmniParser turns a screenshot into a list of clickable elements. It is useful when the target has **no text and no API** — bare icons, custom-drawn controls, game-like UIs. For ordinary apps and web pages it is usually overkill: it cannot read the DOM, misses disabled-state information, and runs a vision model on every frame. `vco` uses OCR for text targets and only pays for a vision model when OCR fails.
+
+### UI-TARS
+
+UI-TARS is closer to a complete zero-code agent: give it a goal and it plans and executes desktop actions. That is powerful for complex one-shot desktop tasks, but it couples you to the UI-TARS model and runtime. `vco` is the opposite: small, composable shell primitives that any agent framework can orchestrate, swap models with, and audit step-by-step.
+
+### Qwen-Omni
+
+Qwen-Omni is a general multimodal model. It can look at a screenshot and suggest an action, but it does not ship with screen control, coordinate math, or retry logic. You still need a surrounding tool to take the screenshot, move the mouse, and handle misses. `vco` is that surrounding tool, while staying free to use Qwen, GPT-4o, Claude, or a local model as the brain.
+
+For web automation, form filling, verifying rendered output, local Computer-Use proofs of concept, or wiring perception/control into your own agent — `vco` is smaller, cheaper, and model-agnostic.
 
 ## Debugging a front-end bug
 
