@@ -37,3 +37,10 @@ For web pages, prefer the headless DOM tools over screen tools — they are dete
 - `web_screenshot`: render and save a screenshot; `record=true` also saves a .webm video.
 - `web_click`: fill inputs (`fills=["placeholder=text"]`) and click a unique `target` text or `selector`; refuses ambiguous targets; `expect` verifies post-click page text; `record=true` saves a video.
 - `web_run`: text-model agent loop (aria snapshot → model action → DOM execute) until done or `max_steps`; `provider` defaults to `ollama` (requires `model`), `glm`/`minimax` use the configured settings.
+
+## Debug mode and live monitor (CLI only)
+
+The CLI adds a debug channel on top of the web tools:
+
+- `vco webrun <url> --task "..." --debug` / `vco webclick <url> --debug [--id N3]`: numbers interactive elements with on-page badges (fixed/sticky elements get `F` ids, in-viewport ones get `N` ids), writes `marks-NNN.json`/`marks-NNN.png`/`page-NNN.html` plus an `events.jsonl` stream into the artifact dir, injects the marks table, user annotations and intercepted manual clicks into the model prompt, and accepts `{"action":"click","id":"N3"}` decisions.
+- `vco watch [--cache-root cache] [--port 8766]`: serves a local monitor page showing each run's event timeline (doing / saw / got / page errors / user clicks / annotations); clicking a badge on the annotated screenshot records an annotation that the next agent step ingests.

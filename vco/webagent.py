@@ -12,7 +12,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from .browser import _PageLog, _apply_fills, _close, _load_pw, _open
+from . import events
+from .browser import _apply_fills, _close, _load_pw, _open, _PageLog
 
 SYSTEM_PROMPT = """You operate a web page through structured actions. You receive the
 page's accessibility tree (roles and visible text). Reply with exactly one JSON
@@ -51,7 +52,10 @@ what they caught on every call after that.
 
 A diagnosis is: reproduce it as a number, arm, act, collect, name where it
 came from. Do not report a cause you have no trace or watch record for; say
-what you measured and that the source is still unknown."""
+what you measured and that the source is still unknown.
+
+Debug runs add an element table ("#id [tag] text bbox=...") and a "User
+annotations (debug)" section; then {"action":"click","id":"F1"} clicks by id."""
 
 
 @dataclass
@@ -85,10 +89,11 @@ def _parse_decision(text: str) -> dict:
         raise ValueError(f"model returned no valid JSON object: {text[:200]!r}") from exc
     if not isinstance(decision, dict) or "action" not in decision:
         raise ValueError(f"decision must contain an action field: {decision!r}")
-    if decision["action"] == "click" and not (
-        decision.get("target") or decision.get("selector")
-    ):
-        raise ValueError("click requires target or selector")
+    if decision["action"] == "click":
+        if decision.get("id") is not None and not isinstance(decision["id"], str):
+            raise ValueError("click id must be a string")
+        if not (decision.get("target") or decision.get("selector") or decision.get("id")):
+            raise ValueError("click requires target, selector or id")
     if decision["action"] == "fill" and not (
         decision.get("placeholder") and decision.get("text") is not None
     ):
@@ -232,6 +237,84 @@ def _wheel(page, selector: str | None, dy: int) -> str | None:
     return None
 
 
+def _debug_snapshot(page, artifact_dir: Path, step: int) -> tuple[dict, str]:
+    """Number the page's interactive elements and render them for the prompt.
+
+    Marks are how the model stops guessing selectors in debug mode: every
+    element gets a data-vco-id and an on-page badge, and the returned text is
+    what makes {"action":"click","id":"N3"} aimable. Everything here is
+    best-effort context — artifacts first, then the prompt sections.
+    """
+    from .dommarks import marks_prompt_table, snapshot_marks
+
+    snap = snapshot_marks(page)
+    marks = snap.get("marks", [])
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    with (artifact_dir / f"marks-{step:03d}.json").open("w", encoding="utf-8") as fh:
+        json.dump(marks, fh, ensure_ascii=False, indent=2)
+    (artifact_dir / f"page-{step:03d}.html").write_text(page.content(), encoding="utf-8")
+    # The badges are already on the page at this point, so the screenshot
+    # carries the numbering a human sees in the monitor.
+    page.screenshot(path=str(artifact_dir / f"marks-{step:03d}.png"))
+
+    marks_by_id = {m["id"]: m for m in marks if m.get("id")}
+    sections = []
+    if marks:
+        sections.append("Interactive elements (debug):\n" + marks_prompt_table(marks))
+    clicks = snap.get("clicks", [])
+    if clicks:
+        lines = []
+        for click in clicks:
+            summary = (
+                f"user clicked #{click.get('id')} "
+                f"at ({click.get('x')},{click.get('y')})"
+            )
+            lines.append(summary)
+            events.emit(
+                artifact_dir, "user_click", step=step, summary=summary, data=click
+            )
+        sections.append("Intercepted user clicks (debug):\n" + "\n".join(lines))
+    annotations_path = artifact_dir / "annotations.jsonl"
+    annotations = []
+    if annotations_path.exists():
+        for line in annotations_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                annotations.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    if annotations:
+        annotated = [
+            marks_by_id[a["id"]] for a in annotations if a.get("id") in marks_by_id
+        ]
+        lines = []
+        if annotated:
+            lines.append(marks_prompt_table(annotated))
+        lines.extend(f'- #{a.get("id")}: "{a.get("text", "")}"' for a in annotations)
+        sections.append("User annotations (debug):\n" + "\n".join(lines))
+    debug_extra = ("\n\n".join(sections) + "\n") if sections else ""
+    return marks_by_id, debug_extra
+
+
+def _action_summary(decision: dict) -> str:
+    action = decision["action"]
+    if action == "click":
+        if decision.get("id"):
+            return f"click #{decision['id']}"
+        return f"click {decision.get('target') or decision.get('selector')}"
+    if action == "scroll":
+        return f"scroll dy={decision['dy']}"
+    if action == "fill":
+        return f"fill {decision.get('placeholder')}"
+    if action == "press":
+        return f"press {decision.get('key')}"
+    if action in {"read", "trace", "watch", "arm", "collect"}:
+        return f"{action} {decision.get('selector')}"
+    return action
+
+
 def run(
     task: str,
     url: str,
@@ -250,9 +333,12 @@ def run(
     system_prompt: str = SYSTEM_PROMPT,
     typing: bool = False,
     extra_context=None,
+    debug: bool = False,
 ) -> WebRunResult:
     sync_playwright = _load_pw()
     log = _PageLog()
+    if artifact_dir is not None:
+        log.events_dir = artifact_dir
     history: list[dict] = []
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")[:-3]
     video_path = None
@@ -268,7 +354,20 @@ def run(
         )
         try:
             for step in range(1, max_steps + 1):
+                if artifact_dir is not None:
+                    events.emit(
+                        artifact_dir, "step_start", step=step,
+                        summary=f"step {step}/{max_steps}",
+                    )
                 tree = page.locator("body").aria_snapshot()
+                if artifact_dir is not None:
+                    events.emit(
+                        artifact_dir, "observation", step=step, summary=tree[:200]
+                    )
+                marks_by_id: dict = {}
+                debug_extra = ""
+                if debug and artifact_dir is not None:
+                    marks_by_id, debug_extra = _debug_snapshot(page, artifact_dir, step)
                 # The accessibility tree carries roles and text and no
                 # selectors at all, so a caller whose actions are addressed by
                 # selector has to supply that half itself.
@@ -278,6 +377,7 @@ def run(
                         extra = extra_context(page) or ""
                     except Exception as exc:  # noqa: BLE001 - context is best-effort
                         extra = f"(context unavailable: {exc})\n"
+                extra += debug_extra
                 prompt = (
                     f"Task: {task}\n"
                     f"Step: {step}/{max_steps}\n"
@@ -301,6 +401,11 @@ def run(
                     entry["metadata"] = getattr(provider, "last_metadata", None)
                     history.append(entry)
                     _save(artifact_dir, task, history, page=page, stamp=stamp)
+                    if artifact_dir is not None:
+                        events.emit(
+                            artifact_dir, "run_end", step=step,
+                            summary=decision.get("reason", ""), data=entry,
+                        )
                     if hold > 0:
                         page.wait_for_timeout(int(hold * 1000))
                     result = WebRunResult(
@@ -310,7 +415,9 @@ def run(
 
                 error = None
                 if decision["action"] == "click":
-                    if decision.get("selector"):
+                    if decision.get("id"):
+                        locator = page.locator(f"[data-vco-id=\"{decision['id']}\"]")
+                    elif decision.get("selector"):
                         locator = page.locator(decision["selector"])
                     else:
                         locator = page.get_by_text(decision["target"], exact=True)
@@ -332,6 +439,16 @@ def run(
                                 )
                                 page.wait_for_timeout(900)
                         locator.first.click()
+                        if decision.get("id"):
+                            # What the id pointed at goes into the record, so
+                            # the next prompt's Previous actions say what was
+                            # clicked, not just which number.
+                            mark = marks_by_id.get(decision["id"])
+                            entry["value"] = (
+                                {k: mark.get(k) for k in ("id", "tag", "text", "bbox")}
+                                if mark
+                                else {"id": decision["id"]}
+                            )
                 elif decision["action"] == "fill":
                     # Character by character when asked, not just when a human
                     # is watching: typing speed is itself a variable — debounce,
@@ -391,6 +508,11 @@ def run(
                 entry["error"] = error
                 entry["metadata"] = getattr(provider, "last_metadata", None)
                 history.append(entry)
+                if artifact_dir is not None:
+                    events.emit(
+                        artifact_dir, "action_result", step=step,
+                        summary=_action_summary(decision), data=entry,
+                    )
                 if settle > 0:
                     page.wait_for_timeout(int(settle * 1000))
 
@@ -398,6 +520,11 @@ def run(
             result = WebRunResult(
                 "max_steps", max_steps, f"stopped after max_steps={max_steps}", history
             )
+            if artifact_dir is not None:
+                events.emit(
+                    artifact_dir, "run_end", step=max_steps,
+                    summary=f"stopped after max_steps={max_steps}",
+                )
             return result
         finally:
             video = _close(browser, context, page=page, video_path=None if video_path is None else str(video_path))

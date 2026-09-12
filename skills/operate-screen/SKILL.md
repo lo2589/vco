@@ -31,6 +31,15 @@ pip install 'vco[browser]' && playwright install chromium   # 仅 webshot 需要
 | `vco find --task "描述" --provider ...` | 无文字目标走视觉模型网格定位 | 无（dry-run） |
 | `vco click --target "文字"` | 定位并真实点击 | **移动鼠标** |
 | `vco click --at x,y` | 直接点击坐标 | **移动鼠标** |
+| `vco watch [--cache-root cache] [--port 8766]` | 起本地监工页：实时时间线展示各 run 的事件（在干/看到/得到/报错/用户点击/批注），可在标注截图上给元素写批注 | 本地 HTTP 服务 |
+
+## Debug 模式（DOM 编号 + 批注注入）
+
+网页链路可加 `--debug` 给可交互元素编号贴角标（fixed/sticky 元素前缀 `F` 全量编号，普通元素前缀 `N` 只编视口内），并按 id 寻址、收集人工反馈：
+
+- `vco webclick <url> --debug`：输出 JSON 新增 `marks` 字段（编号表），`--id N3` 直接按编号点击。
+- `vco webrun <url> --task "..." --debug`：每步把编号表、`annotations.jsonl` 里的用户批注、拦截到的人工点击注入模型 prompt；模型可回 `{"action":"click","id":"N3"}` 按编号点击。产物在产物目录下：`marks-NNN.json`（id→元素映射）、`marks-NNN.png`（标注截图）、`page-NNN.html`、`events.jsonl`（事件流）。
+- 配合 `vco watch` 使用：监工页选到该 run 即可看事件流、在标注图上点编号写批注，批注下一步自动进入模型上下文；headed 模式下人工在浏览器里的点击会被拦截记录为 `user_click` 事件并注入 prompt。
 
 `find`/`click` 输出 JSON 关键字段：
 

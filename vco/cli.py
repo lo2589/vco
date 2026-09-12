@@ -55,6 +55,18 @@ def _point(value: str) -> tuple[int, int]:
         raise argparse.ArgumentTypeError("point must be x,y") from exc
 
 
+def _parse_headers(values) -> dict:
+    """Turn repeated --header 'Name: value' flags into a dict."""
+
+    out: dict[str, str] = {}
+    for raw in values or []:
+        name, sep, value = str(raw).partition(":")
+        if not sep or not name.strip():
+            raise SystemExit(f"--header expects 'Name: value', got {raw!r}")
+        out[name.strip()] = value.strip()
+    return out
+
+
 def _grid(args) -> GridSpec:
     if getattr(args, "zoom", False):
         return GridSpec(rows=4, cols=4)
@@ -243,6 +255,104 @@ def build_parser() -> argparse.ArgumentParser:
     ocr_serve.add_argument("--timeout", type=float, default=30.0)
     ocr_serve.add_argument(
         "--api-key-env", help="environment variable containing required bearer token"
+    )
+
+    watch = commands.add_parser(
+        "watch", help="serve the local run monitor (live events timeline)"
+    )
+    watch.add_argument("--cache-root", type=Path, default=Path("cache"))
+    watch.add_argument("--host", default="127.0.0.1")
+    watch.add_argument("--port", type=int, default=8766)
+    watch.add_argument(
+        "--api-key-env", help="environment variable containing required bearer token"
+    )
+
+    debug = commands.add_parser(
+        "debug",
+        help="drive a real browser through the DOM inspector panel",
+    )
+    debug.add_argument(
+        "target",
+        nargs="?",
+        default=None,
+        help="optional URL to open at start; omit to reuse the previous session",
+    )
+    debug.add_argument("--host", default="127.0.0.1")
+    debug.add_argument("--port", type=int, default=8767)
+    debug.add_argument(
+        "--profile",
+        type=Path,
+        default=Path.home() / ".vco" / "debug-profile",
+        help="persistent browser profile (cookies/storage survive across runs)",
+    )
+    debug.add_argument(
+        "--headful",
+        action="store_true",
+        help="show the Chromium window on screen",
+    )
+    debug.add_argument(
+        "--api-key-env",
+        help="environment variable containing bearer token (required when binding outside localhost)",
+    )
+    debug.add_argument(
+        "--import-chrome",
+        action="store_true",
+        help="launch real Google Chrome with the user's profile so cookies and "
+             "login state travel with the existing browser session. Requires "
+             "Chrome to be closed first.",
+    )
+    debug.add_argument(
+        "--dsh-auth",
+        dest="dsh_auth",
+        action="store_true",
+        default=True,
+        help="for loopback targets, mint the harness (`dsh web`) browser-session "
+             "cookie from ~/.dsh/.credentials.yaml so http://127.0.0.1:3080/ "
+             "renders in the panel instead of its 401 page (default: on)",
+    )
+    debug.add_argument(
+        "--no-dsh-auth",
+        dest="dsh_auth",
+        action="store_false",
+        help="do not touch the harness credential store",
+    )
+    debug.add_argument(
+        "--runs-root",
+        type=Path,
+        default=Path("cache"),
+        help="where vco webclick/webrun leave their run directories; the panel "
+             "shows their event stream and step screenshots (default: cache)",
+    )
+    debug.add_argument(
+        "--header",
+        action="append",
+        default=[],
+        metavar="NAME: VALUE",
+        help="extra HTTP header for every request the controlled browser makes "
+             "(repeatable), e.g. --header 'Authorization: Bearer xyz'",
+    )
+
+    debug_ask = commands.add_parser(
+        "debug-ask",
+        help="open the persistent profile, take one screenshot, and ask the LLM",
+    )
+    debug_ask.add_argument("question", help="what to ask about the current page")
+    debug_ask.add_argument(
+        "--target",
+        help="URL to navigate to first (default: reuse the last page in the profile)",
+    )
+    debug_ask.add_argument(
+        "--profile",
+        type=Path,
+        default=Path.home() / ".vco" / "debug-profile",
+    )
+    debug_ask.add_argument("--llm-base", required=True)
+    debug_ask.add_argument("--llm-key-env", required=True)
+    debug_ask.add_argument("--llm-model", required=True)
+    debug_ask.add_argument(
+        "--import-chrome",
+        action="store_true",
+        help="launch real Google Chrome with the user's profile",
     )
 
     probe = commands.add_parser(
@@ -474,7 +584,21 @@ def build_parser() -> argparse.ArgumentParser:
     webclick.add_argument("url")
     webclick.add_argument("--target", help="visible text to click")
     webclick.add_argument(
+        "--panel",
+        help="run the click inside a running `vco debug` panel's browser "
+             "(http://127.0.0.1:8767) instead of a private headless one, so the "
+             "person watching the panel sees it happen",
+    )
+    webclick.add_argument(
         "--selector", help="CSS/Playwright selector to click instead of --target"
+    )
+    webclick.add_argument(
+        "--id", default=None, help="click the element with this data-vco-id (debug marks)"
+    )
+    webclick.add_argument(
+        "--debug",
+        action="store_true",
+        help="number interactive elements and print the marks table before clicking",
     )
     webclick.add_argument(
         "--contains", action="store_true", help="substring match instead of exact"
@@ -570,6 +694,11 @@ def build_parser() -> argparse.ArgumentParser:
     webrun.add_argument("--headed", action="store_true", help="show the browser window")
     webrun.add_argument("--hold", type=float, default=0.0)
     webrun.add_argument("--record", action="store_true", help="record a .webm video of the session")
+    webrun.add_argument(
+        "--debug",
+        action="store_true",
+        help="number DOM elements each step and inject the marks table + user annotations into the prompt",
+    )
     webrun.add_argument("--dir", type=Path, default=Path(".screenshot"))
     return parser
 
@@ -957,6 +1086,169 @@ def _resolve_text_target(args, target_text: str, *, prefix: str):
     }
 
 
+def _emit_webclick(args, stamp: str, kind: str, summary: str,
+                   after: str | None = None) -> None:
+    """Record one webclick step in the run's event stream.
+
+    Everything that can watch a run — `vco watch`, the `vco debug` panel —
+    reads ``events.jsonl``. Without this an automated click leaves only loose
+    PNGs on disk, so it is invisible to every viewer.
+    """
+
+    from .events import emit
+
+    run_dir = Path(args.dir)
+    image = None
+    if kind == "observation":
+        name = f"webclick-{stamp}.before.png"
+        image = name if (run_dir / name).exists() else None
+    elif after:
+        image = Path(after).name
+    emit(run_dir, kind, summary=summary, image=image)
+
+
+def _webclick_marks(args, stamp: str) -> dict:
+    """webclick with DOM marks: number the elements, then click by id or text.
+
+    browser.click() has no notion of data-vco-id addressing, and the marks
+    have to be snapshotted in the same session as the click — the ids live on
+    the page, not in any file — so the debug path drives playwright directly.
+    The flow mirrors browser.click() so the output JSON keeps the same shape.
+    """
+    from .browser import (
+        _apply_fills,
+        _close,
+        _flash_ring,
+        _load_pw,
+        _open,
+        _PageLog,
+    )
+    from .dommarks import marks_prompt_table, snapshot_marks
+
+    record = str(args.dir / f"webclick-{stamp}.webm") if args.record else None
+    before_path = str(args.dir / f"webclick-{stamp}.before.png")
+    after_path = str(args.dir / f"webclick-{stamp}.after.png")
+    sync_playwright = _load_pw()
+    log = _PageLog()
+    result: dict = {"clicked": False}
+    with sync_playwright() as pw:
+        browser, context, page = _open(
+            pw,
+            args.url,
+            width=args.width,
+            height=args.height,
+            timeout=args.timeout,
+            profile=None if args.profile is None else str(args.profile),
+            log=log,
+            headless=not args.headed,
+            record_dir=None if record is None else str(Path(record).parent),
+        )
+        try:
+            page.screenshot(path=before_path, full_page=False)
+            demo = args.headed or record is not None
+            fill_errors = _apply_fills(page, args.fill, visible=demo)
+            snap = snapshot_marks(page)
+            marks = snap.get("marks", [])
+
+            if args.id:
+                locator = page.locator(f"[data-vco-id=\"{args.id}\"]")
+                target = f"#{args.id}"
+            elif args.selector:
+                locator = page.locator(args.selector)
+                target = args.selector
+            else:
+                locator = page.get_by_text(args.target, exact=True)
+                target = args.target
+            count = locator.count()
+            if count == 0 and not (args.id or args.selector) and args.contains:
+                locator = page.get_by_text(args.target)
+                count = locator.count()
+            candidates = []
+            for i in range(min(count, 8)):
+                item = locator.nth(i)
+                box = item.bounding_box()
+                candidates.append(
+                    {
+                        "text": (item.text_content() or "").strip(),
+                        "bbox": (
+                            None
+                            if box is None
+                            else [
+                                box["x"],
+                                box["y"],
+                                box["x"] + box["width"],
+                                box["y"] + box["height"],
+                            ]
+                        ),
+                    }
+                )
+            result = {
+                "clicked": False,
+                "url": page.url,
+                "target": target,
+                "candidate_count": count,
+                "candidates": candidates,
+                "fill_errors": fill_errors,
+                "before": before_path,
+                "after": None,
+                "x": None,
+                "y": None,
+            }
+            if args.debug:
+                result["marks"] = marks_prompt_table(marks)
+            if count != 1:
+                result["error"] = "no match" if count == 0 else f"ambiguous: {count} matches"
+                _emit_webclick(args, stamp, "page_error", result["error"], after=None)
+                result.update(log.as_dict())
+                return result
+            box = locator.first.bounding_box()
+            if demo and box is not None:
+                page.wait_for_timeout(400)
+                _flash_ring(
+                    page,
+                    box["x"] + box["width"] / 2,
+                    box["y"] + box["height"] / 2,
+                    max(14.0, min(32.0, float(min(box["width"], box["height"])))),
+                )
+                page.wait_for_timeout(900)
+            locator.first.click()
+            page.wait_for_timeout(int(args.settle * 1000))
+            verified = None
+            if args.expect:
+                try:
+                    page.get_by_text(args.expect).first.wait_for(
+                        state="visible", timeout=int(args.expect_timeout * 1000)
+                    )
+                    verified = True
+                except Exception:
+                    verified = False
+            page.screenshot(path=after_path, full_page=False)
+            result.update(
+                {
+                    "clicked": True,
+                    "x": None if box is None else round(box["x"] + box["width"] / 2),
+                    "y": None if box is None else round(box["y"] + box["height"] / 2),
+                    "after": after_path,
+                    "expect": args.expect,
+                    "verified": verified,
+                }
+            )
+            _emit_webclick(
+                args, stamp, "action_result",
+                f"点击 {target}" + ("" if verified is None else
+                                   ("（已验证）" if verified else "（未出现预期内容）")),
+                after=after_path,
+            )
+            result.update(log.as_dict())
+            if args.hold > 0:
+                page.wait_for_timeout(int(args.hold * 1000))
+            return result
+        finally:
+            video = _close(browser, context, page=page, video_path=record)
+            if video:
+                result["video"] = video
+
+
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "overlay":
@@ -1033,6 +1325,124 @@ def main(argv=None) -> int:
         except ValueError as exc:
             raise SystemExit(str(exc)) from exc
         return 0
+
+    if args.command == "watch":
+        if not 1 <= args.port <= 65535:
+            raise SystemExit("--port must be in 1..65535")
+        api_key = None
+        if args.api_key_env:
+            api_key = os.environ.get(args.api_key_env)
+            if not api_key:
+                raise SystemExit(
+                    f"environment variable {args.api_key_env!r} is empty"
+                )
+        from .monitor import serve_monitor
+
+        try:
+            serve_monitor(
+                args.cache_root, host=args.host, port=args.port, api_key=api_key
+            )
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
+        return 0
+
+    if args.command == "debug":
+        if not 1 <= args.port <= 65535:
+            raise SystemExit("--port must be in 1..65535")
+        api_key = None
+        if args.api_key_env:
+            api_key = os.environ.get(args.api_key_env)
+            if not api_key:
+                raise SystemExit(
+                    f"environment variable {args.api_key_env!r} is empty"
+                )
+        from .debug_session import serve_debug
+
+        use_chrome_profile = None
+        if args.import_chrome:
+            import platform
+            import shutil
+            if platform.system() != "Darwin":
+                raise SystemExit("--import-chrome is currently macOS-only")
+            src = Path.home() / "Library" / "Application Support" / "Google" / "Chrome" / "Default"
+            if not (src / "Cookies").exists():
+                raise SystemExit(f"Chrome profile not found at {src}/Cookies")
+            dst = Path(args.profile) / "chrome-import"
+            if dst.exists():
+                shutil.rmtree(dst)
+            dst.mkdir(parents=True)
+            keep = ["Cookies", "Local Storage", "Login Data", "Preferences",
+                    "Secure Preferences", "Network", "Sessions", "Extension Rules"]
+            for name in keep:
+                src_path = src / name
+                if not src_path.exists():
+                    continue
+                dst_path = dst / name
+                if src_path.is_dir():
+                    shutil.copytree(src_path, dst_path)
+                else:
+                    shutil.copy2(src_path, dst_path)
+            use_chrome_profile = str(dst)
+            print(f"[vco] Chrome profile copied to {dst}")
+        try:
+            serve_debug(
+                args.target,
+                profile=args.profile,
+                headful=args.headful,
+                host=args.host,
+                port=args.port,
+                api_key=api_key,
+                use_chrome_profile=use_chrome_profile,
+                dsh_auth=args.dsh_auth,
+                extra_headers=_parse_headers(args.header),
+                runs_root=args.runs_root,
+            )
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
+        return 0
+
+    if args.command == "debug-ask":
+        llm_key = os.environ.get(args.llm_key_env)
+        if not llm_key:
+            raise SystemExit(
+                f"environment variable {args.llm_key_env!r} is empty"
+            )
+        from .debug_session import serve_debug_ask
+        use_chrome_profile = None
+        if args.import_chrome:
+            import platform
+            import shutil
+            if platform.system() != "Darwin":
+                raise SystemExit("--import-chrome is currently macOS-only")
+            src = Path.home() / "Library" / "Application Support" / "Google" / "Chrome" / "Default"
+            if not (src / "Cookies").exists():
+                raise SystemExit(f"Chrome profile not found at {src}/Cookies")
+            dst = Path(args.profile) / "chrome-import"
+            if dst.exists():
+                shutil.rmtree(dst)
+            dst.mkdir(parents=True)
+            keep = ["Cookies", "Local Storage", "Login Data", "Preferences",
+                    "Secure Preferences", "Network", "Sessions", "Extension Rules"]
+            for name in keep:
+                src_path = src / name
+                if not src_path.exists():
+                    continue
+                dst_path = dst / name
+                if src_path.is_dir():
+                    shutil.copytree(src_path, dst_path)
+                else:
+                    shutil.copy2(src_path, dst_path)
+            use_chrome_profile = str(dst)
+            print(f"[vco] Chrome profile copied to {dst}")
+        return serve_debug_ask(
+            args.question,
+            profile=args.profile,
+            target=args.target,
+            llm_base=args.llm_base,
+            llm_key=llm_key,
+            llm_model=args.llm_model,
+            use_chrome_profile=use_chrome_profile,
+        )
 
     if args.command == "shot":
         image, region = _capture_for_args(args)
@@ -1401,10 +1811,38 @@ def main(argv=None) -> int:
         return 0
 
     if args.command == "webclick":
-        if not args.target and not args.selector:
-            raise SystemExit("webclick requires --target TEXT or --selector SELECTOR")
+        if not args.target and not args.selector and not args.id:
+            raise SystemExit("webclick requires --target TEXT, --selector SELECTOR or --id ID")
         args.dir.mkdir(parents=True, exist_ok=True)
         stamp = _timestamp()
+        if args.panel:
+            from .webpanel import click_via_panel
+
+            result = click_via_panel(
+                args.url,
+                args.target,
+                panel=args.panel,
+                selector=args.selector,
+                mark_id=args.id,
+                contains=args.contains,
+                fills=args.fill,
+                settle=args.settle,
+                timeout=args.timeout,
+                expect=args.expect,
+                expect_timeout=args.expect_timeout,
+                run_dir=args.dir,
+                debug=args.debug,
+                want_before=str(args.dir / f"webclick-{stamp}.before.png"),
+                want_after=str(args.dir / f"webclick-{stamp}.after.png"),
+            )
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+            if result.get("error") and not result.get("clicked"):
+                print(f"vco: {result['error']}", file=sys.stderr)
+            return 0 if result.get("clicked") else 2
+        if args.id is not None or args.debug:
+            result = _webclick_marks(args, stamp)
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+            return 0 if result["clicked"] else 2
         from .browser import click as web_click
 
         try:
@@ -1430,7 +1868,20 @@ def main(argv=None) -> int:
                 after_path=str(args.dir / f"webclick-{stamp}.after.png"),
             )
         except RuntimeError as exc:
+            _emit_webclick(args, stamp, "page_error", str(exc))
             raise SystemExit(str(exc)) from exc
+        _emit_webclick(args, stamp, "observation", f"打开 {args.url}")
+        if result.get("clicked"):
+            _emit_webclick(
+                args, stamp, "action_result",
+                f"点击 {args.target or args.selector}"
+                + ("" if result.get("verified") is None else
+                   ("（已验证）" if result.get("verified") else "（未出现预期内容）")),
+                after=result.get("after"),
+            )
+        else:
+            _emit_webclick(args, stamp, "page_error",
+                           result.get("error") or "点击失败")
         print(json.dumps(result, indent=2, ensure_ascii=False))
         return 0 if result["clicked"] else 2
 
@@ -1503,6 +1954,7 @@ def main(argv=None) -> int:
             hold=args.hold,
             record=args.record,
             artifact_dir=args.dir,
+            debug=args.debug,
         )
         print(json.dumps(result.as_dict(), indent=2, ensure_ascii=False))
         return 0 if result.status == "done" else 2

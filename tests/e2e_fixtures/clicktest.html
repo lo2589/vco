@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>vco click test</title></head>
+<body style="margin:0;background:#fff;font:16px monospace">
+  <!-- Absolute geometry on purpose: the verification script clicks fixed
+       fractions of the 1024x768 viewport, so element positions must be
+       predictable instead of depending on UA margins. -->
+  <button id="counter"
+     style="position:absolute;left:20px;top:20px;width:400px;height:140px;font:24px monospace"
+     onclick="window.__n=(window.__n||0)+1;this.textContent='clicked '+window.__n">CLICK ME</button>
+  <a id="link" href="http://127.0.0.1:3080/"
+     style="position:absolute;left:20px;top:220px;width:400px;height:60px;display:block;font:20px monospace">GO TO DSH</a>
+  <div id="status" style="position:absolute;left:20px;top:320px;width:400px;color:#666">status: idle</div>
+</body>
+</html>
