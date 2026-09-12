@@ -30,11 +30,17 @@ vco webclick http://127.0.0.1:9005 --fill 输入消息=你好 --target 发送
                                   # --profile <dir> persists login/cookies; --selector clicks any CSS target
                                   # --headed --hold 3 shows a live demo (visible typing, orange halo on target)
                                   # --record saves a .webm video of the whole session (works headless)
+                                  # --panel http://127.0.0.1:8767 clicks inside the `vco debug`
+                                  #   panel's browser instead, where a human can watch it — see below
 vco webrun http://127.0.0.1:9005 --task 'type xxx and click send' --provider ollama --model qwen3:8b
                                   # text-model agent loop: snapshot → decision → DOM action → repeat until done
 vco webdebug http://127.0.0.1:9005 --task 'I scrolled up to read, sent a message, and it jumped to the top'
                                   # front-end debugger: reproduces the complaint, records why, reports; never edits
                                   # findings are built from what was recorded, so an unproven cause cannot appear
+vco debug http://127.0.0.1:3080/
+                                  # a browser you watch and drive yourself; lock elements → export
+                                  # "where it broke / who owns it"; panel on :8767; `webclick --panel`
+                                  # runs the automation inside this very browser
 ```
 
 Desktop (OCR first; the real mouse moves only via `click`):
@@ -134,6 +140,39 @@ It drives the page like a person: real clicks, a real wheel, and text typed one 
 **Findings come from the evidence, not from the model's closing statement.** A stack that was never captured cannot appear in `culprit`, and "cannot reproduce" is reported as itself rather than dressed up as an answer. Exit code is 0 when the bug was reproduced, 2 when it was not — nothing was learned in that case, which is the outcome worth failing on.
 
 `examples/scroll_bug_fixture.html` is a target to try it against: three ways of losing a scroll position, two of which are indistinguishable from outside and are caught by different halves of `arm`.
+
+## The live debug panel: `vco debug`
+
+`webclick`/`webrun` are "let the machine operate for you". `vco debug` is the other half: **a browser you watch and drive yourself**.
+
+```bash
+vco debug http://127.0.0.1:3080/          # panel opens on http://127.0.0.1:8767/
+```
+
+The left column is the controlled browser's live screen; the right column is the record. One gesture convention:
+
+| Gesture | Result |
+|---|---|
+| plain click / typing | really operates that page: buttons fire, links navigate, Chinese can be typed, ⌘V really pastes, shortcuts really work |
+| ⌘/Ctrl/Alt + click | locks that element into a card on the right; click another and it keeps adding, the same element never duplicates |
+
+**It is the information layer only: capture the scene, export the report.** No model, no page mutation (the old `/api/llm` + patch schema path is gone).
+
+- **Export** produces one Markdown answer to two questions: **where it broke** (selector / rect / path) and **who broke** — by walking up to the first ancestor carrying `id`/`role`/`aria-label`/`data-*`. An element's own class is usually a CSS-module hash you cannot grep, while `data-slot="sidebar.brand.name"` lands you on the component. Console errors and failed requests come along. A "download annotated screenshot" button draws the same boxes and numbers onto the current frame.
+- **Run timeline**: a read-only view of the `events.jsonl` that `webclick`/`webrun`/`watch` leave behind — every step with its screenshot, errors in red. The panel is where you look at a page, so it is also where you look at what the automation did to one.
+- **Works in Safari**: the WebSocket handshake must answer `HTTP/1.1 101` — answering HTTP/1.0 gets rejected by Safari, leaving the panel permanently blank **with no error at all**. A dropped connection now shows a red banner and reconnects itself, and the "connection & input diagnostics" panel reports socket state, input event counters and your browser's UA.
+
+### Make the automation run where you can see it
+
+`webclick` normally launches its own headless browser, which nobody can watch. `--panel` drives **the panel's** browser instead:
+
+```bash
+vco debug http://127.0.0.1:3080/ &                                    # panel on :8767
+vco webclick http://127.0.0.1:3080/ --target "New Session" \
+             --panel http://127.0.0.1:8767 --dir cache/runs/click1
+```
+
+The target gets ringed in orange, waits 0.9 s, then the click lands — all visible in the left column. The DOM cards, hover readout and report keep working, because they are looking at the same page. Addressing, unique-match-or-refuse, `--expect` verification, the result JSON and the run events are identical to the standalone path: switching is a flag.
 
 ## MCP Server
 

@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from .events import emit
 from .executor import ActionExecutor, resolve_action
 from .geometry import GridMapper
 from .grid import render_numbered_grid
@@ -21,6 +22,15 @@ class LoopResult:
     steps: int
     reason: str
     run_dir: Path
+
+
+def _action_summary(action) -> str:
+    """One-line human-readable action for the monitor timeline."""
+    if action.type == "click":
+        return f"click cell={action.target.cell}"
+    if action.type == "drag":
+        return f"drag cell={action.start.cell} -> cell={action.end.cell}"
+    return f"done: {action.reason}"
 
 
 class ComputerUseLoop:
@@ -61,6 +71,13 @@ class ComputerUseLoop:
             grid_path = run_dir / f"step-{step:03d}-grid.png"
             frame.image.save(clean_path)
             gridded.save(grid_path)
+            emit(
+                run_dir,
+                "observation",
+                step=step,
+                summary=f"step {step}/{max_steps} screenshot",
+                image=grid_path.name,
+            )
 
             action = self.provider.choose_action(
                 task=task,
@@ -115,8 +132,19 @@ class ComputerUseLoop:
                 json.dumps(record, indent=2, ensure_ascii=False),
                 encoding="utf-8",
             )
+            emit(
+                run_dir,
+                "action_result",
+                step=step,
+                summary=_action_summary(action),
+                data={
+                    "model_action": record["model_action"],
+                    "resolved_local_action": record["resolved_local_action"],
+                },
+            )
 
             if action.type == "done":
+                emit(run_dir, "run_end", step=step, summary=f"done: {action.reason}")
                 return LoopResult("done", step, action.reason, run_dir)
 
             assert resolved is not None
@@ -124,6 +152,7 @@ class ComputerUseLoop:
             if self.settle_seconds:
                 time.sleep(self.settle_seconds)
 
+        emit(run_dir, "run_end", summary=f"stopped after max_steps={max_steps}")
         return LoopResult(
             "max_steps",
             max_steps,

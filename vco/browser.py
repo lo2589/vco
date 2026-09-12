@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from .events import emit
+
 
 class _PageLog:
     """Collect console errors, uncaught exceptions, and failed requests."""
@@ -12,21 +14,29 @@ class _PageLog:
         self.console_errors: list[str] = []
         self.page_errors: list[str] = []
         self.failed_requests: list[str] = []
+        self.events_dir: Path | None = None
         self._limit = limit
 
     def attach(self, page) -> None:
         def on_console(message):
             if message.type == "error" and len(self.console_errors) < self._limit:
                 self.console_errors.append(message.text)
+                if self.events_dir is not None:
+                    emit(self.events_dir, "page_error", summary=f"console: {message.text}")
 
         def on_page_error(error):
             if len(self.page_errors) < self._limit:
                 self.page_errors.append(str(error))
+                if self.events_dir is not None:
+                    emit(self.events_dir, "page_error", summary=f"pageerror: {error}")
 
         def on_request_failed(request):
             if len(self.failed_requests) < self._limit:
                 failure = request.failure or ""
-                self.failed_requests.append(f"{request.method} {request.url} {failure}")
+                entry = f"{request.method} {request.url} {failure}"
+                self.failed_requests.append(entry)
+                if self.events_dir is not None:
+                    emit(self.events_dir, "page_error", summary=f"requestfailed: {entry}")
 
         page.on("console", on_console)
         page.on("pageerror", on_page_error)

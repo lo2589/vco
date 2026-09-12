@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>VCO 调试</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 13px/1.5 -apple-system, "PingFang SC", sans-serif;
+         color: #1a1a1a; background: #f5f5f7; height: 100vh;
+         display: grid; grid-template-columns: 1fr 400px; overflow: hidden; }
+  #left { display: flex; flex-direction: column; min-width: 0; background: #1f2937; }
+  #chrome-bar { display: flex; gap: 4px; padding: 6px; background: #111827;
+                border-bottom: 1px solid #374151; align-items: center; }
+  #chrome-bar button { padding: 3px 9px; border: 1px solid #4b5563;
+                       background: #374151; color: #e5e7eb; border-radius: 4px;
+                       cursor: pointer; font: 12px -apple-system; }
+  #chrome-bar button:hover { background: #4b5563; }
+  #url { flex: 1; padding: 4px 8px; border: 1px solid #4b5563;
+         background: #0b1220; color: #e5e7eb; border-radius: 4px;
+         font: 12px ui-monospace, monospace; }
+  #url:focus { outline: 1px solid #60a5fa; }
+  #viewport { flex: 1; overflow: auto; background: #0b1220; padding: 8px; }
+  /* #stage is sized from the screenshot's natural size (see fitStage) so the
+     event mask always covers exactly the rendered page, never the letterbox. */
+  #stage { position: relative; margin: 0 auto; background: #fff;
+           box-shadow: 0 0 0 1px #374151; }
+  #frame { display: block; width: 100%; height: 100%;
+           image-rendering: -webkit-optimize-contrast;
+           user-select: none; -webkit-user-drag: none; }
+  #overlay { position: absolute; inset: 0; pointer-events: none; }
+  /* The mask is the keyboard sink: it is contenteditable so the browser will
+     hand us `beforeinput`, `paste` and IME composition. Its own text is always
+     cleared immediately (we forward it to the page instead). */
+  .event-mask { position: absolute; inset: 0; cursor: crosshair; outline: none;
+                color: transparent; caret-color: transparent; }
+  .event-mask:focus { outline: none; }
+  .event-mask.dim { cursor: copy; }
+  .marker { position: absolute; border: 2px solid #f97316;
+            background: rgba(249, 115, 22, 0.12); border-radius: 2px;
+            pointer-events: none; }
+  .marker .tag { position: absolute; top: -9px; left: -2px; background: #f97316;
+                 color: #fff; font: 10px/1.5 ui-monospace, monospace;
+                 padding: 0 4px; border-radius: 3px; white-space: nowrap; }
+  .marker.hot { border-color: #2563eb; background: rgba(37, 99, 235, 0.16); }
+  .marker.hot .tag { background: #2563eb; }
+  .marker.stale { border-style: dashed; border-color: #9ca3af; background: none; }
+  #right { border-left: 1px solid #d1d1d6; background: #fff; overflow-y: auto;
+           padding: 12px; display: flex; flex-direction: column; gap: 12px; }
+  h2 { font-size: 12px; margin: 0 0 4px; color: #6b7280;
+       text-transform: uppercase; letter-spacing: 0.05em; }
+  h2 .hint { font-weight: normal; color: #9ca3af; font-size: 11px;
+             text-transform: none; letter-spacing: 0; }
+  h2 .count { color: #2563eb; }
+  .card { border: 1px solid #e5e7eb; border-radius: 6px; padding: 8px 10px;
+          background: #fafafa; }
+  .card pre { margin: 0; white-space: pre-wrap; word-break: break-all;
+              font: 12px/1.5 ui-monospace, monospace; color: #111827; }
+  .row { display: flex; gap: 6px; }
+  .row > * { flex: 1; min-width: 0; }
+  input, textarea { width: 100%; font: 12px -apple-system;
+                    padding: 4px 6px; border: 1px solid #d1d1d6;
+                    border-radius: 4px; background: #fff; }
+  textarea { min-height: 70px; resize: vertical; }
+  button { padding: 5px 10px; border: 1px solid #d1d1d6; background: #fff;
+           border-radius: 4px; cursor: pointer; font: 12px -apple-system; }
+  button.primary { background: #2563eb; color: #fff; border-color: #2563eb; }
+  button:hover { background: #f3f4f6; }
+  button.primary:hover { background: #1d4ed8; }
+  button.link { border: 0; background: none; color: #2563eb; padding: 2px 4px; }
+  button.link:hover { text-decoration: underline; background: none; }
+  #hover-selector { color: #374151; font: 11px/1.5 ui-monospace, monospace;
+                    min-height: 14px; word-break: break-all; }
+  #hover-rect { color: #9ca3af; font: 11px ui-monospace, monospace; }
+  #export-status { font: 11px; color: #6b7280; min-height: 14px; margin-top: 4px; }
+  #report-preview { margin: 0; white-space: pre-wrap; word-break: break-word;
+                    font: 11px/1.5 ui-monospace, monospace; color: #111827; }
+  .pick-card { position: relative; border: 1px solid #d1d5db;
+               border-radius: 6px; background: #fff; padding: 8px 10px 10px;
+               margin-bottom: 8px; }
+  .pick-card.hot { border-color: #2563eb; box-shadow: 0 0 0 2px #dbeafe; }
+  .pick-card .pick-close { position: absolute; top: 5px; right: 6px;
+                           border: 0; background: transparent; color: #6b7280;
+                           cursor: pointer; font-size: 14px; line-height: 1;
+                           padding: 0 2px; }
+  .pick-card .pick-close:hover { color: #ef4444; }
+  .pick-card .pick-head { font: 12px/1.45 ui-monospace, monospace;
+                          color: #111827; margin-right: 22px; }
+  .pick-card .pick-id { color: #3730a3; }
+  .pick-card .pick-num { display: inline-block; min-width: 16px;
+                         background: #f97316; color: #fff; border-radius: 3px;
+                         text-align: center; font-size: 10px; padding: 0 3px;
+                         margin-right: 4px; }
+  .pick-card .pick-sel { color: #1d4ed8; word-break: break-all; }
+  .pick-card .pick-meta { color: #6b7280; font: 11px/1.5 -apple-system;
+                          margin-top: 3px; }
+  .pick-card .pick-html { color: #4b5563; font: 11px/1.45 ui-monospace, monospace;
+                          background: #f3f4f6; border-radius: 4px; padding: 4px 6px;
+                          margin-top: 4px; max-height: 84px; overflow: auto;
+                          white-space: pre-wrap; word-break: break-all; }
+  .pick-card textarea { width: 100%; min-height: 44px; margin-top: 6px;
+                        font: 12px -apple-system; padding: 4px 6px;
+                        border: 1px solid #d1d1d6; border-radius: 4px;
+                        background: #fffbeb; resize: vertical; }
+  .pick-card textarea:focus { background: #fff; outline: 1px solid #93c5fd; }
+  #errors { max-height: 100px; overflow-y: auto; }
+  #runs { font: 11px ui-monospace, monospace; padding: 3px 4px;
+          border: 1px solid #d1d1d6; border-radius: 4px; background: #fff; }
+  .run-event { display: flex; gap: 6px; align-items: flex-start;
+               padding: 3px 0; border-bottom: 1px solid #f3f4f6;
+               font: 11px/1.45 ui-monospace, monospace; }
+  .run-event .t { color: #9ca3af; flex: 0 0 auto; }
+  .run-event .k { flex: 0 0 auto; padding: 0 4px; border-radius: 3px;
+                  background: #e0e7ff; color: #3730a3; }
+  .run-event .s { flex: 1; min-width: 0; word-break: break-word; }
+  .run-event.err .k { background: #fee2e2; color: #991b1b; }
+  .run-event .thumb { height: 34px; border: 1px solid #d1d5db; border-radius: 3px;
+                      cursor: zoom-in; flex: 0 0 auto; }
+  #run-preview img { max-width: 100%; border: 1px solid #d1d5db; border-radius: 4px; }
+  #errors .err { color: #b91c1c; font: 11px ui-monospace; padding: 1px 0;
+                 border-bottom: 1px solid #fee2e2; }
+  #picks-empty { color: #9ca3af; font-size: 12px; }
+  kbd { background: #f3f4f6; border: 1px solid #d1d5db; border-bottom-width: 2px;
+        border-radius: 3px; padding: 0 4px; font: 11px ui-monospace, monospace; }
+  /* A dead socket used to be invisible: the old screenshot stayed on screen and
+     every click was dropped without a word. Now it says so. */
+  #link-banner { display: none; padding: 6px 10px; background: #7f1d1d; color: #fee2e2;
+                 font: 12px -apple-system; border-bottom: 1px solid #991b1b; }
+  #link-banner.on { display: block; }
+  #diag { color: #6b7280; font: 10px ui-monospace, monospace; word-break: break-all; }
+</style>
+</head>
+<body>
+<div id="left">
+  <div id="link-banner">
+    ⚠ 与 vco 服务的连接已断开（多半是服务重启过）——正在自动重连。若一直不恢复，请刷新本页。
+  </div>
+  <div id="chrome-bar">
+    <button id="btn-back" title="Back">←</button>
+    <button id="btn-forward" title="Forward">→</button>
+    <button id="btn-reload" title="Reload">⟳</button>
+    <input id="url" placeholder="输入 URL 后回车（可贴 http://127.0.0.1:3080/）">
+  </div>
+  <div id="viewport">
+    <div id="stage">
+      <img id="frame" alt="browser screenshot">
+      <div id="overlay"></div>
+      <div class="event-mask" id="mask" tabindex="0" contenteditable="true"
+           spellcheck="false" autocapitalize="off" autocorrect="off"
+           aria-label="受控浏览器视口：点击操作页面，⌘/Ctrl+点击锁定元素"></div>
+    </div>
+  </div>
+</div>
+<div id="right">
+  <div>
+    <h2>当前 URL</h2>
+    <div class="card"><pre id="target-url">—</pre></div>
+  </div>
+  <div>
+    <h2>鼠标下的元素 <span class="hint">（实时）</span></h2>
+    <div class="card">
+      <div id="hover-selector">在视口里移动鼠标</div>
+      <div id="hover-rect"></div>
+    </div>
+  </div>
+  <div>
+    <h2>选择栈 <span class="count" id="picks-count">0</span>
+      <span class="hint">（<kbd>⌘</kbd>/<kbd>Ctrl</kbd>/<kbd>Alt</kbd> + 点击 = 锁定一块，累积；普通点击 = 真点击）</span>
+    </h2>
+    <div class="row" style="margin-bottom:6px">
+      <button id="btn-clear-picks" class="link" style="flex:0 0 auto">清空选择栈</button>
+    </div>
+    <div id="picks-stack">
+      <div class="card" id="picks-empty">
+        ⌘/Ctrl + 点击视口里的元素 → 这里出现一张卡片，记录它的 DOM，并给你一个 annotation 输入框。<br>
+        再 ⌘/Ctrl + 点击别的元素 → 再出现一张新卡片。普通点击照常操作页面。
+      </div>
+    </div>
+  </div>
+  <div>
+    <h2>文字输入 <span class="hint">（中文/长文本/粘贴 → 送进页面聚焦的元素）</span></h2>
+    <div class="row">
+      <input id="typebox" placeholder="在这里打字或粘贴，回车送进页面">
+      <button id="btn-send-text" class="primary" style="flex:0 0 auto">发送</button>
+    </div>
+    <div id="type-status" class="pick-meta" style="min-height:14px"></div>
+  </div>
+  <div>
+    <h2>控制台 / 错误 <span class="hint">（实时）</span></h2>
+    <div class="card">
+      <div id="errors"></div>
+      <div class="row" style="margin-top:4px"><button id="btn-clear-errors">清空</button></div>
+    </div>
+  </div>
+  <div>
+    <h2>连接与输入诊断 <span class="hint">（点了没反应时看这里）</span></h2>
+    <div class="card"><div id="diag">…</div></div>
+  </div>
+  <div>
+    <h2>运行记录 <span class="hint">（webclick / webrun / watch 的事件流，只读）</span></h2>
+    <div class="row">
+      <select id="runs" style="flex:1"></select>
+      <button id="btn-runs-refresh" style="flex:0 0 auto">刷新</button>
+    </div>
+    <div id="run-events" class="card" style="margin-top:6px;max-height:260px;overflow:auto"></div>
+    <div id="run-preview" style="margin-top:6px"></div>
+  </div>
+  <div>
+    <h2>导出 <span class="hint">（哪里错了 + 谁错了，就这些）</span></h2>
+    <div class="row">
+      <button id="btn-copy-report" class="primary" style="flex:0 0 auto">复制报告</button>
+      <button id="btn-download-report" style="flex:0 0 auto">下载 .md</button>
+      <button id="btn-download-shot" style="flex:0 0 auto">下载标注截图</button>
+    </div>
+    <div id="export-status" class="pick-meta" style="min-height:14px"></div>
+    <div class="card" style="margin-top:6px">
+      <pre id="report-preview" style="max-height:260px;overflow:auto"></pre>
+    </div>
+  </div>
+</div>
+<script src="/static/panel.js"></script>
+<textarea id="clip-helper" aria-hidden="true"
+          style="position:fixed;left:-9999px;top:0;width:10px;height:10px"></textarea>
+</body>
+</html>

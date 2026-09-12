@@ -1,0 +1,12 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>typing test</title></head>
+<body style="margin:0;font:16px monospace">
+  <input id="field" type="text" placeholder="type here"
+     style="position:absolute;left:20px;top:60px;width:600px;height:60px;font:20px monospace"
+     oninput="document.getElementById('echo').textContent='input: '+this.value"
+     onkeydown="if(event.ctrlKey&&event.key==='b'){window.__b=(window.__b||0)+1;document.getElementById('flag').textContent='ctrl+b x'+window.__b}">
+  <div id="echo" style="position:absolute;left:20px;top:130px;width:800px">input: (empty)</div>
+  <div id="flag" style="position:absolute;left:20px;top:170px;width:800px">ctrl+b x0</div>
+</body>
+</html>
