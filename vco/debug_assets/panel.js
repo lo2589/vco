@@ -651,25 +651,18 @@
     const cls = pick.className
       ? "." + pick.className.split(/\s+/).filter(Boolean).slice(0, 3).join(".") : "";
     title.textContent = "<" + (pick.tag || "?") + ">" + (pick.id ? "#" + pick.id : "") + cls;
-    const close = document.createElement("button");
-    close.textContent = "×";
-    // Delete, not collapse: the block is the one place a locked element is
-    // managed, so its × drops the pick from the server's stack (the server
-    // echoes the new stack back). Collapsing is what the panel's own footer
-    // does when you pick the next element.
-    close.title = "删除这个锁定元素";
-    close.onclick = () => { send({ type: "remove_pick", selector: keyOf(pick) }); };
-
-    // Clearing the whole stack lives up here, on the sticky block, because the
-    // cards themselves sit under the fold of a long sidebar: deleting them one
-    // by one means scrolling to each. This control never scrolls away.
+    // The header carries the element's identity and the stack-wide clear; the
+    // per-element delete moves down into the action row, beside the insert
+    // verbs. A glyph pinned to the header's right edge sits under a
+    // `word-break: break-all` title and only has 22px reserved, so a long class
+    // list runs over it — the action row has a real cell instead of a margin.
     const clearAll = document.createElement("button");
     clearAll.className = "clear-all";
     clearAll.textContent = "清空 " + picks.length;
     clearAll.title = "删除全部锁定元素";
     clearAll.onclick = () => { send({ type: "clear_picks" }); };
 
-    head.append(num, title, clearAll, close);
+    head.append(num, title, clearAll);
 
     const sel = document.createElement("div");
     sel.className = "fcard-sel";
@@ -752,6 +745,21 @@
       };
       acts.appendChild(b);
     });
+
+    // The per-element delete sits WITH the insert verbs, where the element's
+    // other actions already are, instead of being pinned to the header's right
+    // edge under a wrapping title. Full width and set apart, so it reads as the
+    // destructive one.
+    const del = document.createElement("button");
+    del.className = "wide danger";
+    del.textContent = "删除这个元素";
+    del.title = "把这个锁定元素从选择栈里删掉";
+    del.onclick = () => {
+      send({ type: "remove_pick", selector: keyOf(pick) });
+      flashDetail("已删除这个锁定元素", true);
+    };
+    acts.appendChild(del);
+
     box.appendChild(acts);
 
     const status = document.createElement("div");
