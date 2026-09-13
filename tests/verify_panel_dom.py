@@ -94,6 +94,10 @@ PICK = {
         "attrs": {"type": "submit", "class": "primary btn"},
         "outerHTML": '<button id="submit" class="primary btn" type="submit">提交订单</button>',
         "owner": {"tag": "form", "id": "order-form", "cls": "checkout", "role": "form", "hops": 1},
+        # Stamped by the server at lock time, so a pick keeps naming the page it
+        # came from even after the operator navigates the controlled browser.
+        "pageUrl": "http://127.0.0.1:8931/vco-target.html",
+        "pageTitle": "VCO 测试页",
         "lockedAt": 1700000000000,
     }],
 }
@@ -221,6 +225,17 @@ def main() -> int:
               len(info) >= 2 and "button#submit.primary" in info[1].get("text", "")
               and "提交订单" in info[1].get("text", ""),
               (info[1].get("text", "").replace("\n", " | ") if len(info) >= 2 else "nothing posted"))
+
+        # The whole point of the payload: it must say WHICH page the element is
+        # on and WHERE on it, not just which selector matched.
+        postedBlock = info[-1].get("text", "") if info else ""
+        check("payload names the page the pick came from",
+              "VCO 测试页" in postedBlock and "vco-target.html" in postedBlock,
+              postedBlock.splitlines()[1] if postedBlock else "nothing posted")
+        check("payload carries the element's position",
+              "- 位置:" in postedBlock and "@ (" in postedBlock)
+        check("payload carries the element's path and attributes",
+              "- 路径:" in postedBlock and "- 属性:" in postedBlock)
 
         # --- annotation reaches the report ----------------------------------
         frame.locator("#detail-card input.anno").fill("点了没反应")

@@ -563,16 +563,57 @@
 
   // One compact line of Markdown-ish text, which is what both the panel's own
   // report and the chat composer render well.
+  //
+  // What a locked element has to answer, in the order a reader needs it:
+  // WHERE the page is, WHERE on the page it sits, WHICH element it is, what it
+  // says, and its markup. Selector + text + HTML alone left out the first two,
+  // which is exactly the pair that makes a report actionable — the same
+  // `div.stat` exists on every page of a site.
   function detailBlock(pick, noteOverride) {
     const lines = [];
     // noteOverride lets a stack card build ITS OWN block (its own annotation)
     // instead of borrowing whatever is typed in the floating detail block.
     const note = (noteOverride !== undefined ? noteOverride : detailNote || "").trim();
     if (note) lines.push(note);
+
+    // The page is the pick's OWN page, stamped when it was locked, so a pick
+    // stays honest after you navigate away.
+    const url = pick.pageUrl || pageContext.url || "";
+    const title = pick.pageTitle || pageContext.title || "";
+    if (url) lines.push("- 页面: " + (title ? title + " — " : "") + url);
+    else lines.push("- 页面: (未知)");
+
+    const r = pick.rect;
+    if (r) {
+      // Only claim a viewport when the frame actually measured itself. FRAME's
+      // natural size falls back to a constant before the first screenshot
+      // lands, and a made-up coordinate space is worse than none: the reader
+      // would take (x, y) as meaningful against the wrong box.
+      const measured = FRAME.naturalWidth > 0 && FRAME.naturalHeight > 0;
+      const { w: vw, h: vh } = frameSize();
+      lines.push("- 位置: " + Math.round(r.w) + "×" + Math.round(r.h)
+        + " @ (" + Math.round(r.x) + ", " + Math.round(r.y) + ")"
+        + (measured ? "  视口 " + vw + "×" + vh : "  (页面坐标)")
+        + (pick.visible === false || pick.missing ? "  ⚠ 不可见/已不在页面上" : ""));
+    }
+
     lines.push("- 选择器: `" + (pick.selector || "?") + "`");
+    if (pick.path && pick.path !== pick.selector) lines.push("- 路径: " + pick.path);
+    const idBits = [];
+    if (pick.role) idBits.push("role=" + pick.role);
+    if (pick.childCount != null) idBits.push("children " + pick.childCount);
+    if (pick.depth != null) idBits.push("层级 " + pick.depth);
+    if (pick.htmlLen != null) idBits.push("HTML " + pick.htmlLen + " 字");
+    if (idBits.length) lines.push("- 元素: " + idBits.join(" · "));
     if (pick.text) lines.push("- 文字: “" + pick.text.slice(0, 160) + "”");
     if (pick.owner) lines.push("- 归属: " + ownerText(pick.owner));
-    if (pick.outerHTML) lines.push("- HTML: `" + pick.outerHTML.replace(/`/g, "'").slice(0, 300) + "`");
+    const attrs = Object.entries(pick.attrs || {})
+      .map(([k, v]) => k + '="' + v + '"').join(" ");
+    if (attrs) lines.push("- 属性: " + attrs.slice(0, 240));
+    if (pick.outerHTML) {
+      lines.push("- HTML: `" + pick.outerHTML.replace(/`/g, "'").slice(0, 300) + "`"
+        + (pick.outerHTML.length > 300 ? "  (截断)" : ""));
+    }
     return lines.join("\n");
   }
 
