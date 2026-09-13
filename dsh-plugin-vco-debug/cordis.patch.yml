@@ -11,9 +11,19 @@
     - id: vco-debug
       name: dsh-plugin-vco-debug
       config:
-        # Where the vco checkout lives, and which interpreter runs it.
+        # Where the vco checkout lives.
         workspace: /Users/a1/Workspace/WORKSPACE/visual_computer_operate
-        python: /tmp/vco-install-demo/venv/bin/python
+        # Interpreter that can `import playwright` and `import vco` (vco is
+        # imported from `workspace`, so it does not need installing).
+        #
+        # DELIBERATELY NOT PINNED to a venv path: this used to name
+        # /tmp/vco-install-demo/venv/bin/python, /tmp got cleaned, and the
+        # panel then could not start at all — while the status route still
+        # reported a healthy process, so it looked like a connection problem
+        # rather than a missing interpreter. Leaving this out lets src/host.js
+        # pick the first interpreter that exists, and VCO_PYTHON can override
+        # it per shell.
+        python: /usr/bin/python3
         # First port tried; the host scans upward if it is taken.
         port: 8919
         # Page the controlled browser opens at start. Without this the panel

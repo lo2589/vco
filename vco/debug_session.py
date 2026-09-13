@@ -980,6 +980,17 @@ class DebugSession:
                     # accumulate cards instead of replacing them.
                     sel = desc.get("selector") or ""
                     desc["lockedAt"] = int(time.time() * 1000)
+                    # Where this element was locked. Stamped HERE, at lock time,
+                    # because the panel used to read the *current* page when
+                    # building a payload: lock an element on one page, navigate
+                    # away, and the block it produced named the wrong page.
+                    # A re-broadcast keeps the stored value, so it stays true.
+                    try:
+                        desc["pageUrl"] = self._page.url
+                        desc["pageTitle"] = await self._page.title()
+                    except Exception:  # noqa: BLE001
+                        desc["pageUrl"] = self.last_url or ""
+                        desc["pageTitle"] = ""
                     if sel in self.annotations:
                         desc["annotation"] = self.annotations[sel]
                     merged = False

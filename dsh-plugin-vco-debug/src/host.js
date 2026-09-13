@@ -42,7 +42,7 @@ module.exports = {
 
     function snapshot(extra) {
       return Object.assign({
-        running: Boolean(state.child) && state.child.exitCode === null,
+        running: alive(),
         url: state.url,
         port: state.port,
         pid: state.child ? state.child.pid : 0,
@@ -51,12 +51,33 @@ module.exports = {
       }, extra || {})
     }
 
+    /**
+     * Is the panel process actually there?
+     *
+     * `child.exitCode === null` is not enough: a process killed from outside
+     * (the interpreter's directory removed under it, or a SIGTERM from a shell)
+     * can leave that null while the PID is long gone, and the status route then
+     * reports a healthy panel that answers nothing. Ask the OS instead.
+     */
+    function alive() {
+      const child = state.child
+      if (!child || child.exitCode !== null || child.signalCode !== null) return false
+      try {
+        process.kill(child.pid, 0)
+        return true
+      } catch (e) {
+        return false
+      }
+    }
+
     function resolvePython() {
       const candidates = []
       if (typeof config.python === 'string' && config.python) candidates.push(config.python)
       if (process.env.VCO_PYTHON) candidates.push(process.env.VCO_PYTHON)
       candidates.push(path.join(root, '.venv', 'bin', 'python'))
-      candidates.push('/tmp/vco-install-demo/venv/bin/python')
+      candidates.push('/usr/bin/python3')
+      candidates.push('/opt/homebrew/bin/python3')
+      candidates.push('/usr/local/bin/python3')
       for (const c of candidates) {
         try { if (fs.existsSync(c)) return c } catch (e) { /* keep looking */ }
       }
@@ -94,7 +115,9 @@ module.exports = {
 
     /** Bring the panel up: reuse one already answering, otherwise spawn it. */
     async function start(target) {
-      if (state.child && state.child.exitCode === null) return snapshot({ ok: true, note: '已在运行' })
+      if (alive()) return snapshot({ ok: true, note: '已在运行' })
+      // A stale child record (dead PID) must not block a fresh start.
+      if (state.child) { note('旧的进程记录已失效，重新启动'); state.child = null }
 
       const configured = Number(config.port) || BASE_PORT
       const python = resolvePython()
@@ -168,7 +191,7 @@ module.exports = {
     void start()
     ctx.interval(() => {
       // Self-heal: if the panel died, bring it back rather than leaving a blank frame.
-      if (!state.child || state.child.exitCode !== null) void start()
+      if (!alive()) void start()
     }, 15000)
   },
 }
