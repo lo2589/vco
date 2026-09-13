@@ -65,14 +65,23 @@
                        cursor: pointer; font-size: 14px; line-height: 1;
                        padding: 0 2px; }
   .fcard-head button:hover { color: #ef4444; background: none; }
-  /* The stack-wide delete: a word-sized control, not the 14px glyph of the
-     per-element ×, and separated from it so a mis-click does not clear all. */
-  .fcard-head button.clear-all { font: 10.5px/1 -apple-system; color: #6b7280;
-                                 border: 1px solid #d1d5db; border-radius: 4px;
-                                 padding: 2px 6px; margin-right: 6px;
-                                 flex: 0 0 auto; }
-  .fcard-head button.clear-all:hover { color: #b91c1c; border-color: #fca5a5;
-                                       background: #fef2f2; }
+  /* The node list under the selected element: one row each, click to select.
+     This is what turns the block into a chooser instead of a copy of the newest
+     card. Scrolls on its own so a long stack never pushes the verbs away. */
+  .fcard-list { margin-top: 5px; display: flex; flex-direction: column;
+                gap: 2px; max-height: 108px; overflow-y: auto;
+                border-top: 1px solid #e5e7eb; padding-top: 4px; }
+  .fcard-node { display: flex; align-items: center; gap: 4px; width: 100%;
+                text-align: left; border: 1px solid transparent;
+                background: none; border-radius: 4px; cursor: pointer;
+                padding: 2px 4px; font: 10.5px/1.5 ui-monospace, monospace;
+                color: #6b7280; }
+  .fcard-node .txt { flex: 1; min-width: 0; overflow: hidden;
+                     text-overflow: ellipsis; white-space: nowrap; }
+  .fcard-node:hover { background: #f3f4f6; }
+  .fcard-node.on { border-color: #93c5fd; background: #eff6ff; color: #1d4ed8; }
+  .fcard-node.clear { color: #b91c1c; justify-content: center;
+                      border-color: #fecaca; }
   .fcard-sel { color: #1d4ed8; font: 11px/1.45 ui-monospace, monospace;
                word-break: break-all; margin-top: 3px; }
   .fcard-meta { color: #6b7280; font: 10.5px/1.45 ui-monospace, monospace;
@@ -92,6 +101,8 @@
                 margin-top: 5px; }
   .fcard-acts button { padding: 3px 6px; font-size: 11px; }
   .fcard-acts button.wide { grid-column: 1 / -1; }
+  /* Two wide controls share one row instead of each taking a line of its own. */
+  .fcard-acts button.half { grid-column: auto; }
   /* Destructive, so it does not look like the four insert verbs above it. */
   .fcard-acts button.danger { color: #b91c1c; border-color: #fecaca;
                               background: #fff; }

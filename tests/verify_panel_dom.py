@@ -172,10 +172,15 @@ def main() -> int:
         # --- content of the block -------------------------------------------
         content = page.frames[1].evaluate("""() => {
           const card = document.querySelector('#detail-card .fcard');
+          // The node list is the card's SIBLING, not a descendant: it belongs to
+          // the chooser as a whole, and it lists every locked element.
+          const panel = document.getElementById('detail-card');
           return {
             head: card.querySelector('.grow').textContent,
             sel: card.querySelector('.fcard-sel').textContent,
-            meta: card.querySelector('.fcard-meta').textContent,
+            metaLines: card.querySelectorAll('.fcard-meta').length,
+            nodes: Array.from(panel.querySelectorAll('.fcard-node')).map(b => b.textContent),
+            selected: (panel.querySelector('.fcard-node.on') || {}).textContent || '',
             buttons: Array.from(card.querySelectorAll('.fcard-acts button'))
                            .map(b => b.textContent),
             anno: !!card.querySelector('input.anno'),
@@ -184,14 +189,23 @@ def main() -> int:
         check("block names the locked element", content["head"] == "<button>#submit.primary.btn",
               content["head"])
         check("block shows the selector", content["sel"] == "button#submit.primary", content["sel"])
-        check("block shows size/role", "120×36" in content["meta"] and "role button" in content["meta"],
-              content["meta"])
+        # The block no longer repeats size/role/owner: those lines made it look
+        # like a copy of the card below, which is exactly what the operator
+        # called useless.
+        check("block does not repeat the card's metadata lines",
+              content["metaLines"] == 0, str(content["metaLines"]))
+        check("block lists the locked elements as a chooser",
+              content["nodes"] == ["1button#submit.primary", "清空全部 1"],
+              str(content["nodes"]))
+        check("the newest element is the selected one",
+              content["selected"] == "1button#submit.primary", content["selected"])
         check("block carries the annotation box", content["anno"])
         # Four insert verbs plus the destructive delete, which lives in the same
         # row on purpose: a glyph pinned to the header's right edge sits under a
         # `word-break: break-all` title and only has 22px reserved.
-        check("block offers the four insert verbs then delete",
-              content["buttons"] == ["选择器", "HTML", "文字", "全部信息", "删除这个元素"],
+        check("block offers the insert verbs, the shot path, delete and re-shoot",
+              content["buttons"] == ["选择器", "HTML", "文字", "全部信息", "截图路径",
+                                     "删除这个元素", "重新截图"],
               str(content["buttons"]))
         check("delete sits in the action row, not the header",
               page.frames[1].evaluate(
@@ -227,9 +241,8 @@ def main() -> int:
         page.wait_for_timeout(200)
         info = page.evaluate("() => window.__posted")
         check("info button posts the whole block",
-              len(info) >= 2 and "button#submit.primary" in info[1].get("text", "")
-              and "提交订单" in info[1].get("text", ""),
-              (info[1].get("text", "").replace("\n", " | ") if len(info) >= 2 else "nothing posted"))
+              len(info) >= 2 and "button#submit.primary" in info[-1].get("text", ""),
+              (info[-1].get("text", "").replace("\n", " | ") if len(info) >= 2 else "nothing posted"))
 
         # The whole point of the payload: it must say WHICH page the element is
         # on and WHERE on it, not just which selector matched.
@@ -237,12 +250,28 @@ def main() -> int:
         check("payload names the page the pick came from",
               "VCO 测试页" in postedBlock and "vco-target.html" in postedBlock,
               postedBlock.splitlines()[1] if postedBlock else "nothing posted")
-        check("payload carries the element's position",
-              "- 位置:" in postedBlock and "@ (" in postedBlock)
-        check("payload carries the element's path and attributes",
-              "- 路径:" in postedBlock and "- 属性:" in postedBlock)
+        # The block is deliberately four things and no more: the operator's
+        # note, the page, the DOM position, and the screenshot. Size, role,
+        # owner, attributes and raw HTML were noise in a chat message.
+        check("payload carries the DOM tree position",
+              "- DOM:" in postedBlock and "button#submit.primary" in postedBlock)
+        # Three lines without a note, four with one: the operator's note is the
+        # only optional part. Nothing else belongs in a chat message.
+        lines = [l for l in postedBlock.splitlines() if l.strip()]
+        check("payload stays page + DOM + screenshot (plus the note when typed)",
+              3 <= len(lines) <= 4 and lines[-1].startswith("- 截图:"),
+              str(len(lines)) + " lines")
         check("payload points at the lock-time screenshot",
               "- 截图:" in postedBlock and "pick-example.png" in postedBlock)
+        check("re-shoot asks the server for a fresh capture",
+              page.frames[1].evaluate("""() => {
+                window.__sent = [];
+                const b = Array.from(document.querySelectorAll('#detail-card .fcard-acts button'))
+                  .find(x => x.textContent === '重新截图');
+                if (!b) return false;
+                b.click();
+                return window.__sent.some(s => s.includes('rescreenshot'));
+              }"""))
         check("the block renders that screenshot inline",
               page.frames[1].evaluate("""() => {
                 const i = document.querySelector('.fcard-shot img');

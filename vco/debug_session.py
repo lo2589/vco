@@ -226,6 +226,7 @@ CLIENT_MESSAGES = frozenset({
     "key", "insert_text", "copy_selection",
     "goto", "back", "forward", "reload",
     "pick_at", "remove_pick", "clear_picks", "measure_picks", "annotate",
+    "rescreenshot",
     "context", "client_info", "client_pulse",
     "runs_list", "run_poll",
     # Remote-control verbs: another process (e.g. `vco webclick --panel`) drives
@@ -1069,6 +1070,24 @@ class DebugSession:
                         "payload": desc,
                         "added": not merged,
                     })
+            elif kind == "rescreenshot":
+                # Take the shot again, on demand. The lock-time capture is the
+                # default, but the page moves: a pick made before a deploy (or
+                # before the operator scrolled) wants a fresh picture, and the
+                # card is where that decision belongs.
+                sel = msg.get("selector") or ""
+                shot = await self._lock_screenshot(sel or "pick")
+                if shot:
+                    for item in self.last_picks:
+                        if (item.get("selector") or "") == sel:
+                            item["shotPath"] = shot["path"]
+                            item["shot"] = shot["png"]
+                            item["shotAt"] = int(time.time() * 1000)
+                    self._broadcast({
+                        "type": "pick", "picks": list(self.last_picks), "payload": None,
+                    })
+                else:
+                    self._broadcast({"type": "error", "text": "截图失败"})
             elif kind == "remove_pick":
                 sel = msg.get("selector") or ""
                 self.annotations.pop(sel, None)   # the card is gone, so is its note
