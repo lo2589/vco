@@ -98,6 +98,11 @@ PICK = {
         # came from even after the operator navigates the controlled browser.
         "pageUrl": "http://127.0.0.1:8931/vco-target.html",
         "pageTitle": "VCO 测试页",
+        # The server attaches the lock-time screenshot; the path is what a
+        # report points at, the base64 is what the block renders. 1x1 PNG.
+        "shotPath": ".screenshot/pick-example.png",
+        "shot": ("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8"
+                 "z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="),
         "lockedAt": 1700000000000,
     }],
 }
@@ -236,6 +241,13 @@ def main() -> int:
               "- 位置:" in postedBlock and "@ (" in postedBlock)
         check("payload carries the element's path and attributes",
               "- 路径:" in postedBlock and "- 属性:" in postedBlock)
+        check("payload points at the lock-time screenshot",
+              "- 截图:" in postedBlock and "pick-example.png" in postedBlock)
+        check("the block renders that screenshot inline",
+              page.frames[1].evaluate("""() => {
+                const i = document.querySelector('.fcard-shot img');
+                return !!i && i.complete && i.naturalWidth > 0;
+              }"""))
 
         # --- annotation reaches the report ----------------------------------
         frame.locator("#detail-card input.anno").fill("点了没反应")

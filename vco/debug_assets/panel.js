@@ -583,6 +583,11 @@
     if (url) lines.push("- 页面: " + (title ? title + " — " : "") + url);
     else lines.push("- 页面: (未知)");
 
+    // The screenshot is what the operator was looking at when they locked this.
+    // The path goes in the text so a report points at a real file; the picture
+    // itself is rendered inline in the block above the verbs.
+    if (pick.shotPath) lines.push("- 截图: `" + pick.shotPath + "`");
+
     const r = pick.rect;
     if (r) {
       // Only claim a viewport when the frame actually measured itself. FRAME's
@@ -750,6 +755,27 @@
     };
     anno.onkeydown = (ev) => ev.stopPropagation();
     box.appendChild(anno);
+
+    // What the page looked like when this was locked. Inline, because the
+    // question "which element do you mean" is answered by a picture far more
+    // reliably than by a selector — and it is the same PNG the report points
+    // at on disk.
+    if (pick.shot) {
+      const fig = document.createElement("div");
+      fig.className = "fcard-shot";
+      const img = document.createElement("img");
+      img.src = "data:image/png;base64," + pick.shot;
+      img.alt = "锁定时的页面截图";
+      img.loading = "lazy";
+      // Click to open full size: the block is a summary, and a full-page shot
+      // is unreadable at summary scale.
+      img.onclick = () => window.open(img.src, "_blank");
+      img.title = pick.shotPath
+        ? "点击看大图（也存于 " + pick.shotPath + "）"
+        : "点击看大图";
+      fig.appendChild(img);
+      box.appendChild(fig);
+    }
 
     const acts = document.createElement("div");
     acts.className = "fcard-acts";

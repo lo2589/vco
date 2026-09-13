@@ -82,6 +82,12 @@
                 margin-top: 4px; max-height: 46px; overflow: hidden;
                 white-space: pre-wrap; word-break: break-all; }
   .fcard input.anno { margin-top: 5px; background: #fffbeb; }
+  /* The shot of the page as it was when this element was locked. Capped, so a
+     full-page capture cannot push the verbs out of the sticky block; clicking
+     opens it full size. */
+  .fcard-shot { margin-top: 5px; border: 1px solid #e5e7eb; border-radius: 4px;
+                overflow: hidden; background: #f9fafb; max-height: 150px; }
+  .fcard-shot img { display: block; width: 100%; height: auto; cursor: zoom-in; }
   .fcard-acts { display: grid; grid-template-columns: 1fr 1fr; gap: 4px;
                 margin-top: 5px; }
   .fcard-acts button { padding: 3px 6px; font-size: 11px; }
