@@ -178,8 +178,26 @@ def main() -> int:
         check("block shows size/role", "120×36" in content["meta"] and "role button" in content["meta"],
               content["meta"])
         check("block carries the annotation box", content["anno"])
-        check("block offers 4 actions", content["buttons"] == ["选择器", "HTML", "文字", "全部信息"],
+        # Four insert verbs plus the destructive delete, which lives in the same
+        # row on purpose: a glyph pinned to the header's right edge sits under a
+        # `word-break: break-all` title and only has 22px reserved.
+        check("block offers the four insert verbs then delete",
+              content["buttons"] == ["选择器", "HTML", "文字", "全部信息", "删除这个元素"],
               str(content["buttons"]))
+        check("delete sits in the action row, not the header",
+              page.frames[1].evaluate(
+                  "() => document.querySelectorAll('#detail-card .fcard-head button.danger').length") == 0
+              and page.frames[1].evaluate(
+                  "() => document.querySelectorAll('#detail-card .fcard-acts button.danger').length") == 1)
+        # Not merely present: nothing may cover it.
+        check("delete button is the top-most element at its own centre",
+              page.frames[1].evaluate("""() => {
+                const b = document.querySelector('#detail-card button.danger');
+                if (!b) return false;
+                const r = b.getBoundingClientRect();
+                if (!(r.width > 0 && r.height > 0)) return false;
+                return document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2) === b;
+              }"""))
 
         # --- the insert channel into the host page --------------------------
         page.frames[1].evaluate("""() => {
