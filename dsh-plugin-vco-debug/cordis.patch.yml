@@ -1,0 +1,21 @@
+# dsh-plugin-vco-debug — host entry.
+#
+# `id: vco-debug` is the cordis ENTRY id; `name: dsh-plugin-vco-debug` is the
+# package the entry mounts. The browser bundle route is built from the PACKAGE
+# name (`/plugins/dsh-plugin-vco-debug/client.js`, per the web plugin table
+# service), which is why src/client.js registers under the package name too —
+# matching the working `dsh-provider-quick-config` bundle in this profile.
+# (cdd-lens's comment claims the loader pairs by entry id; its own client
+# registers under a different id again, so that comment is not the rule.)
+- insert:
+    - id: vco-debug
+      name: dsh-plugin-vco-debug
+      config:
+        # Where the vco checkout lives, and which interpreter runs it.
+        workspace: /Users/a1/Workspace/WORKSPACE/visual_computer_operate
+        python: /tmp/vco-install-demo/venv/bin/python
+        # First port tried; the host scans upward if it is taken.
+        port: 8919
+        # Page the controlled browser opens at start. Without this the panel
+        # streams a blank about:blank frame, which reads as "still connecting".
+        target: http://127.0.0.1:3080/
