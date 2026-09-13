@@ -555,10 +555,18 @@
       label, kind, value,
       title: value ? value.slice(0, 90) : "(空)",
       disabled: !value,
-    })).concat([{
-      label: "全部信息", kind: "info", value: "", title: "选择器 + 文字 + HTML + 归属",
-      disabled: false, index,
-    }]);
+    })).concat([
+      {
+        label: "全部信息", kind: "info", value: "",
+        title: "页面 + 位置 + 选择器 + 文字 + HTML + 归属 + 截图路径",
+        disabled: false, index,
+      },
+      {
+        label: "截图路径", kind: "shot", value: pick.shotPath || "",
+        title: pick.shotPath ? pick.shotPath : "还没有截图",
+        disabled: !pick.shotPath,
+      },
+    ]);
   }
 
   // One compact line of Markdown-ish text, which is what both the panel's own
@@ -572,7 +580,7 @@
   function detailBlock(pick, noteOverride) {
     const lines = [];
     // noteOverride lets a stack card build ITS OWN block (its own annotation)
-    // instead of borrowing whatever is typed in the floating detail block.
+    // instead of borrowing whatever is typed in the selected-element block.
     const note = (noteOverride !== undefined ? noteOverride : detailNote || "").trim();
     if (note) lines.push(note);
 
@@ -583,42 +591,17 @@
     if (url) lines.push("- 页面: " + (title ? title + " — " : "") + url);
     else lines.push("- 页面: (未知)");
 
-    // The screenshot is what the operator was looking at when they locked this.
-    // The path goes in the text so a report points at a real file; the picture
-    // itself is rendered inline in the block above the verbs.
+    // The DOM tree position, which is what identifies the element: the unique
+    // selector, and the short human path when it says something the selector
+    // does not.
+    const sel = pick.selector || "?";
+    const path = pick.path && pick.path !== sel ? "  (" + pick.path + ")" : "";
+    lines.push("- DOM: `" + sel + "`" + path);
+    if (pick.visible === false || pick.missing) lines.push("- 状态: ⚠ 不可见/已不在页面上");
+
+    // The picture of what was locked, as a file the reader can open.
     if (pick.shotPath) lines.push("- 截图: `" + pick.shotPath + "`");
 
-    const r = pick.rect;
-    if (r) {
-      // Only claim a viewport when the frame actually measured itself. FRAME's
-      // natural size falls back to a constant before the first screenshot
-      // lands, and a made-up coordinate space is worse than none: the reader
-      // would take (x, y) as meaningful against the wrong box.
-      const measured = FRAME.naturalWidth > 0 && FRAME.naturalHeight > 0;
-      const { w: vw, h: vh } = frameSize();
-      lines.push("- 位置: " + Math.round(r.w) + "×" + Math.round(r.h)
-        + " @ (" + Math.round(r.x) + ", " + Math.round(r.y) + ")"
-        + (measured ? "  视口 " + vw + "×" + vh : "  (页面坐标)")
-        + (pick.visible === false || pick.missing ? "  ⚠ 不可见/已不在页面上" : ""));
-    }
-
-    lines.push("- 选择器: `" + (pick.selector || "?") + "`");
-    if (pick.path && pick.path !== pick.selector) lines.push("- 路径: " + pick.path);
-    const idBits = [];
-    if (pick.role) idBits.push("role=" + pick.role);
-    if (pick.childCount != null) idBits.push("children " + pick.childCount);
-    if (pick.depth != null) idBits.push("层级 " + pick.depth);
-    if (pick.htmlLen != null) idBits.push("HTML " + pick.htmlLen + " 字");
-    if (idBits.length) lines.push("- 元素: " + idBits.join(" · "));
-    if (pick.text) lines.push("- 文字: “" + pick.text.slice(0, 160) + "”");
-    if (pick.owner) lines.push("- 归属: " + ownerText(pick.owner));
-    const attrs = Object.entries(pick.attrs || {})
-      .map(([k, v]) => k + '="' + v + '"').join(" ");
-    if (attrs) lines.push("- 属性: " + attrs.slice(0, 240));
-    if (pick.outerHTML) {
-      lines.push("- HTML: `" + pick.outerHTML.replace(/`/g, "'").slice(0, 300) + "`"
-        + (pick.outerHTML.length > 300 ? "  (截断)" : ""));
-    }
     return lines.join("\n");
   }
 
@@ -626,6 +609,8 @@
     if (kind === "selector") return pick.selector || "";
     if (kind === "html") return (pick.outerHTML || "").trim();
     if (kind === "text") return (pick.text || "").trim();
+    // Just the picture, for when the report is about how it LOOKS.
+    if (kind === "shot") return (pick.shotPath || "").trim();
     return detailBlock(pick);
   }
 
@@ -697,35 +682,23 @@
     const cls = pick.className
       ? "." + pick.className.split(/\s+/).filter(Boolean).slice(0, 3).join(".") : "";
     title.textContent = "<" + (pick.tag || "?") + ">" + (pick.id ? "#" + pick.id : "") + cls;
-    // The header carries the element's identity and the stack-wide clear; the
-    // per-element delete moves down into the action row, beside the insert
-    // verbs. A glyph pinned to the header's right edge sits under a
-    // `word-break: break-all` title and only has 22px reserved, so a long class
-    // list runs over it — the action row has a real cell instead of a margin.
-    const clearAll = document.createElement("button");
-    clearAll.className = "clear-all";
-    clearAll.textContent = "清空 " + picks.length;
-    clearAll.title = "删除全部锁定元素";
-    clearAll.onclick = () => { send({ type: "clear_picks" }); };
+    // The header carries only the element's identity. The stack-wide clear now
+    // lives in the node list below, where "every element" is visibly the thing
+    // it acts on, instead of in a header that describes one element.
 
-    head.append(num, title, clearAll);
+    head.append(num, title);
 
+    // The selector IS the node's identity, so it stays. The size/role/children
+    // line and the owner line used to repeat what the card below already shows,
+    // which is what made this block look like a duplicate of the stack.
     const sel = document.createElement("div");
     sel.className = "fcard-sel";
     sel.textContent = pick.selector || "(no selector)";
+    if (pick.missing || pick.visible === false) {
+      sel.textContent += "   ⚠ 已不在页面上";
+    }
 
-    const meta = document.createElement("div");
-    meta.className = "fcard-meta";
-    meta.textContent = (pick.rect ? Math.round(pick.rect.w) + "×" + Math.round(pick.rect.h) : "?×?")
-      + "  ·  role " + (pick.role || "?")
-      + "  ·  children " + (pick.childCount != null ? pick.childCount : "?")
-      + (pick.missing ? "  ·  ⚠ 已不在页面上" : "");
-
-    const owner = document.createElement("div");
-    owner.className = "fcard-meta";
-    owner.textContent = "归属: " + (ownerText(pick.owner) || "(无)");
-
-    box.append(head, sel, meta, owner);
+    box.append(head, sel);
 
     if (pick.outerHTML) {
       const html = document.createElement("div");
@@ -784,9 +757,19 @@
       b.textContent = spec.label;
       b.title = spec.title;
       b.disabled = spec.disabled;
-      if (spec.kind === "info") {
-        b.className = "wide";
+      if (spec.kind === "info" || spec.kind === "shot") {
+        b.className = "wide half";
         b.onclick = () => {
+          if (spec.kind === "shot") {
+            if (!spec.value) return;
+            if (forwardToHost("insert-text", spec.value, pick)) {
+              flashDetail("已把截图路径送进对话输入框", true);
+              return;
+            }
+            copyText(spec.value).then((ok) => flashDetail(
+              ok ? "已复制截图路径" : "复制失败", ok));
+            return;
+          }
           const payload = detailBlock(pick);
           if (forwardToHost("info", payload, pick)) {
             flashDetail("已送到对话：等它在输入框里出现再决定发送", true);
@@ -827,6 +810,19 @@
     };
     acts.appendChild(del);
 
+    // Take the picture again. The lock-time shot is the default, but the page
+    // moves — a pick made before a deploy or before a scroll wants a fresh one,
+    // and the card is where that decision belongs.
+    const reshoot = document.createElement("button");
+    reshoot.className = "wide";
+    reshoot.textContent = "重新截图";
+    reshoot.title = "现在重新截一张，替换这个元素的截图";
+    reshoot.onclick = () => {
+      send({ type: "rescreenshot", selector: keyOf(pick) });
+      flashDetail("正在重新截图…", true);
+    };
+    acts.appendChild(reshoot);
+
     box.appendChild(acts);
 
     const status = document.createElement("div");
@@ -834,6 +830,47 @@
     box.appendChild(status);
 
     card.appendChild(box);
+
+    // --- the node list -------------------------------------------------------
+    // One row per locked element, and clicking a row selects it. This is what
+    // makes the block above a CHOOSER rather than a duplicate of the newest
+    // card: the selected element is the one the details and the verbs act on,
+    // and it does not have to be the newest one.
+    //
+    // The chips and the stack below both list the same picks, deliberately:
+    // this one is for switching (numbered, no scrolling), the cards are for
+    // reading and annotating one element at length.
+    if (picks.length) {
+      const list = document.createElement("div");
+      list.className = "fcard-list";
+      picks.forEach((p, i) => {
+        const row = document.createElement("button");
+        row.type = "button";
+        row.className = "fcard-node" + (i === detailIndex ? " on" : "");
+        row.title = p.selector || "";
+        const n = document.createElement("span");
+        n.className = "pick-num";
+        n.textContent = String(i + 1);
+        const label = document.createElement("span");
+        label.className = "txt";
+        label.textContent = p.selector || "(no selector)";
+        row.append(n, label);
+        row.onclick = () => {
+          detailNote = annotations[keyOf(p)] !== undefined ? annotations[keyOf(p)] : "";
+          detailIndex = i;
+          renderDetail();
+        };
+        list.appendChild(row);
+      });
+      const clear = document.createElement("button");
+      clear.type = "button";
+      clear.className = "fcard-node clear";
+      clear.textContent = "清空全部 " + picks.length;
+      clear.title = "删除全部锁定元素";
+      clear.onclick = () => { send({ type: "clear_picks" }); };
+      list.appendChild(clear);
+      card.appendChild(list);
+    }
   }
 
   function detailKey() {
