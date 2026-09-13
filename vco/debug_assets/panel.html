@@ -65,6 +65,14 @@
                        cursor: pointer; font-size: 14px; line-height: 1;
                        padding: 0 2px; }
   .fcard-head button:hover { color: #ef4444; background: none; }
+  /* The stack-wide delete: a word-sized control, not the 14px glyph of the
+     per-element ×, and separated from it so a mis-click does not clear all. */
+  .fcard-head button.clear-all { font: 10.5px/1 -apple-system; color: #6b7280;
+                                 border: 1px solid #d1d5db; border-radius: 4px;
+                                 padding: 2px 6px; margin-right: 6px;
+                                 flex: 0 0 auto; }
+  .fcard-head button.clear-all:hover { color: #b91c1c; border-color: #fca5a5;
+                                       background: #fef2f2; }
   .fcard-sel { color: #1d4ed8; font: 11px/1.45 ui-monospace, monospace;
                word-break: break-all; margin-top: 3px; }
   .fcard-meta { color: #6b7280; font: 10.5px/1.45 ui-monospace, monospace;

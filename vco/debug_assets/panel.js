@@ -659,7 +659,17 @@
     // does when you pick the next element.
     close.title = "删除这个锁定元素";
     close.onclick = () => { send({ type: "remove_pick", selector: keyOf(pick) }); };
-    head.append(num, title, close);
+
+    // Clearing the whole stack lives up here, on the sticky block, because the
+    // cards themselves sit under the fold of a long sidebar: deleting them one
+    // by one means scrolling to each. This control never scrolls away.
+    const clearAll = document.createElement("button");
+    clearAll.className = "clear-all";
+    clearAll.textContent = "清空 " + picks.length;
+    clearAll.title = "删除全部锁定元素";
+    clearAll.onclick = () => { send({ type: "clear_picks" }); };
+
+    head.append(num, title, clearAll, close);
 
     const sel = document.createElement("div");
     sel.className = "fcard-sel";
