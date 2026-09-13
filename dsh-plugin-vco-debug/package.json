@@ -1,0 +1,25 @@
+{
+  "name": "dsh-plugin-vco-debug",
+  "version": "0.1.0",
+  "private": true,
+  "description": "vco debug as a dsh conversation view: the controlled browser becomes a peer of Chat / Trajectory / CDD Lens, and a locked element can be inserted straight into the composer.",
+  "type": "commonjs",
+  "main": "src/host.js",
+  "exports": {
+    ".": "./src/host.js",
+    "./client": "./src/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "cordis.patch.yml"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web"
+    }
+  }
+}

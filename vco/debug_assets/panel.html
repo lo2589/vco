@@ -1,13 +1,14 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-vco-panel="vco-debug-panel">
 <head>
 <meta charset="utf-8">
-<title>VCO 调试</title>
+<meta name="vco-panel" content="vco-debug-panel">
+<title>VCO</title>
 <style>
   * { box-sizing: border-box; }
   body { margin: 0; font: 13px/1.5 -apple-system, "PingFang SC", sans-serif;
          color: #1a1a1a; background: #f5f5f7; height: 100vh;
-         display: grid; grid-template-columns: 1fr 400px; overflow: hidden; }
+         display: grid; grid-template-columns: 1fr 360px; overflow: hidden; }
   #left { display: flex; flex-direction: column; min-width: 0; background: #1f2937; }
   #chrome-bar { display: flex; gap: 4px; padding: 6px; background: #111827;
                 border-bottom: 1px solid #374151; align-items: center; }
@@ -45,7 +46,52 @@
   .marker.hot .tag { background: #2563eb; }
   .marker.stale { border-style: dashed; border-color: #9ca3af; background: none; }
   #right { border-left: 1px solid #d1d1d6; background: #fff; overflow-y: auto;
-           padding: 12px; display: flex; flex-direction: column; gap: 12px; }
+           padding: 10px; display: flex; flex-direction: column; gap: 9px; }
+  /* The detail block for a locked element is the top of the sidebar and stays
+     there while the rest scrolls under it (sticky, not scrolled-to): a fresh
+     pick is immediately readable and its insert buttons never leave reach. */
+  #detail-host { position: sticky; top: -10px; z-index: 6; margin: -10px -10px 0;
+                 padding: 10px 10px 8px; background: #fff;
+                 border-bottom: 1px solid #e5e7eb; }
+  #hover-line { font: 10.5px/1.4 ui-monospace, monospace; color: #9ca3af;
+                min-height: 13px; margin-bottom: 4px; word-break: break-all; }
+  #detail-card:empty { display: none; }
+  .fcard { border: 1px solid #c7d2fe; border-left: 3px solid #2563eb;
+           border-radius: 6px; background: #f8faff; padding: 7px 9px 8px; }
+  .fcard-head { display: flex; gap: 6px; align-items: baseline;
+                font: 12px/1.4 ui-monospace, monospace; color: #111827; }
+  .fcard-head .grow { flex: 1; min-width: 0; word-break: break-all; }
+  .fcard-head button { border: 0; background: none; color: #6b7280;
+                       cursor: pointer; font-size: 14px; line-height: 1;
+                       padding: 0 2px; }
+  .fcard-head button:hover { color: #ef4444; background: none; }
+  .fcard-sel { color: #1d4ed8; font: 11px/1.45 ui-monospace, monospace;
+               word-break: break-all; margin-top: 3px; }
+  .fcard-meta { color: #6b7280; font: 10.5px/1.45 ui-monospace, monospace;
+                word-break: break-all; margin-top: 2px; }
+  .fcard-html { color: #4b5563; font: 10.5px/1.45 ui-monospace, monospace;
+                background: #eef2ff; border-radius: 4px; padding: 3px 5px;
+                margin-top: 4px; max-height: 46px; overflow: hidden;
+                white-space: pre-wrap; word-break: break-all; }
+  .fcard input.anno { margin-top: 5px; background: #fffbeb; }
+  .fcard-acts { display: grid; grid-template-columns: 1fr 1fr; gap: 4px;
+                margin-top: 5px; }
+  .fcard-acts button { padding: 3px 6px; font-size: 11px; }
+  .fcard-acts button.wide { grid-column: 1 / -1; }
+  #detail-status { font: 10.5px/1.4 -apple-system; color: #6b7280;
+                   min-height: 13px; margin-top: 3px; }
+  #detail-status.ok { color: #15803d; }
+  .sect { border-top: 1px solid #f0f0f2; padding-top: 7px; }
+  .sec-row { display: flex; gap: 6px; align-items: center; }
+  .sec-row > strong { font: 11px/1.4 -apple-system; color: #6b7280;
+                      font-weight: 600; text-transform: uppercase;
+                      letter-spacing: 0.04em; flex: 1; }
+  .sec-row .count { color: #2563eb; font-weight: 600; }
+  details > summary { font: 11px/1.5 -apple-system; color: #6b7280;
+                      cursor: pointer; text-transform: uppercase;
+                      letter-spacing: 0.04em; font-weight: 600; }
+  details > summary::marker { color: #9ca3af; }
+  details[open] > summary { margin-bottom: 5px; }
   h2 { font-size: 12px; margin: 0 0 4px; color: #6b7280;
        text-transform: uppercase; letter-spacing: 0.05em; }
   h2 .hint { font-weight: normal; color: #9ca3af; font-size: 11px;
@@ -102,6 +148,12 @@
                         border: 1px solid #d1d1d6; border-radius: 4px;
                         background: #fffbeb; resize: vertical; }
   .pick-card textarea:focus { background: #fff; outline: 1px solid #93c5fd; }
+  .pick-card .pick-acts { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+  .pick-card .pick-acts button { padding: 2px 10px; border-radius: 5px;
+                                 border: 1px solid #2563eb; background: #2563eb;
+                                 color: #fff; cursor: pointer; font: 11px -apple-system; }
+  .pick-card .pick-acts button:hover { background: #1d4ed8; }
+  .pick-card .pick-status { color: #16a34a; font: 11px -apple-system; }
   #errors { max-height: 100px; overflow-y: auto; }
   #runs { font: 11px ui-monospace, monospace; padding: 3px 4px;
           border: 1px solid #d1d1d6; border-radius: 4px; background: #fff; }
@@ -151,71 +203,63 @@
   </div>
 </div>
 <div id="right">
-  <div>
-    <h2>当前 URL</h2>
-    <div class="card"><pre id="target-url">—</pre></div>
+  <!-- Sticky top: what is under the cursor, and the detail block of the
+       element locked most recently. -->
+  <div id="detail-host">
+    <div id="hover-line"></div>
+    <div id="detail-card"></div>
   </div>
-  <div>
-    <h2>鼠标下的元素 <span class="hint">（实时）</span></h2>
-    <div class="card">
-      <div id="hover-selector">在视口里移动鼠标</div>
-      <div id="hover-rect"></div>
-    </div>
+
+  <div class="card" style="padding:5px 8px">
+    <div id="target-url" class="fcard-meta" style="margin:0">—</div>
   </div>
+
   <div>
-    <h2>选择栈 <span class="count" id="picks-count">0</span>
-      <span class="hint">（<kbd>⌘</kbd>/<kbd>Ctrl</kbd>/<kbd>Alt</kbd> + 点击 = 锁定一块，累积；普通点击 = 真点击）</span>
-    </h2>
-    <div class="row" style="margin-bottom:6px">
-      <button id="btn-clear-picks" class="link" style="flex:0 0 auto">清空选择栈</button>
+    <div class="sec-row">
+      <strong>锁定元素 <span class="count" id="picks-count">0</span></strong>
+      <button id="btn-clear-picks" class="link">清空</button>
     </div>
-    <div id="picks-stack">
-      <div class="card" id="picks-empty">
-        ⌘/Ctrl + 点击视口里的元素 → 这里出现一张卡片，记录它的 DOM，并给你一个 annotation 输入框。<br>
-        再 ⌘/Ctrl + 点击别的元素 → 再出现一张新卡片。普通点击照常操作页面。
-      </div>
-    </div>
+    <div id="picks-stack"></div>
   </div>
-  <div>
-    <h2>文字输入 <span class="hint">（中文/长文本/粘贴 → 送进页面聚焦的元素）</span></h2>
-    <div class="row">
-      <input id="typebox" placeholder="在这里打字或粘贴，回车送进页面">
-      <button id="btn-send-text" class="primary" style="flex:0 0 auto">发送</button>
-    </div>
-    <div id="type-status" class="pick-meta" style="min-height:14px"></div>
+
+  <div class="sect">
+    <div id="type-status" class="fcard-meta" style="min-height:13px"></div>
   </div>
-  <div>
-    <h2>控制台 / 错误 <span class="hint">（实时）</span></h2>
-    <div class="card">
-      <div id="errors"></div>
+
+  <details class="sect">
+    <summary>控制台 <span class="count" id="err-count">0</span></summary>
+    <div class="card"><div id="errors"></div>
       <div class="row" style="margin-top:4px"><button id="btn-clear-errors">清空</button></div>
     </div>
-  </div>
-  <div>
-    <h2>连接与输入诊断 <span class="hint">（点了没反应时看这里）</span></h2>
-    <div class="card"><div id="diag">…</div></div>
-  </div>
-  <div>
-    <h2>运行记录 <span class="hint">（webclick / webrun / watch 的事件流，只读）</span></h2>
+  </details>
+
+  <details class="sect">
+    <summary>运行记录</summary>
     <div class="row">
       <select id="runs" style="flex:1"></select>
       <button id="btn-runs-refresh" style="flex:0 0 auto">刷新</button>
     </div>
-    <div id="run-events" class="card" style="margin-top:6px;max-height:260px;overflow:auto"></div>
+    <div id="run-events" class="card" style="margin-top:6px;max-height:220px;overflow:auto"></div>
     <div id="run-preview" style="margin-top:6px"></div>
-  </div>
-  <div>
-    <h2>导出 <span class="hint">（哪里错了 + 谁错了，就这些）</span></h2>
+  </details>
+
+  <details class="sect">
+    <summary>导出</summary>
     <div class="row">
       <button id="btn-copy-report" class="primary" style="flex:0 0 auto">复制报告</button>
-      <button id="btn-download-report" style="flex:0 0 auto">下载 .md</button>
-      <button id="btn-download-shot" style="flex:0 0 auto">下载标注截图</button>
+      <button id="btn-download-report" style="flex:0 0 auto">.md</button>
+      <button id="btn-download-shot" style="flex:0 0 auto">标注截图</button>
     </div>
-    <div id="export-status" class="pick-meta" style="min-height:14px"></div>
+    <div id="export-status" class="fcard-meta" style="min-height:13px"></div>
     <div class="card" style="margin-top:6px">
-      <pre id="report-preview" style="max-height:260px;overflow:auto"></pre>
+      <pre id="report-preview" style="max-height:220px;overflow:auto"></pre>
     </div>
-  </div>
+  </details>
+
+  <details class="sect">
+    <summary>诊断</summary>
+    <div class="card"><div id="diag">…</div></div>
+  </details>
 </div>
 <script src="/static/panel.js"></script>
 <textarea id="clip-helper" aria-hidden="true"

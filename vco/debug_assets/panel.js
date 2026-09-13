@@ -142,11 +142,27 @@
     } else if (msg.type === "pick") {
       // Server owns the selection: it accumulates one entry per locked
       // element and echoes the whole stack after every change.
+      const before = picks.map(keyOf).join("|");
+      const beforeIdx = detailIndex >= 0 && picks[detailIndex]
+        ? keyOf(picks[detailIndex]) : "";
       picks = Array.isArray(msg.picks) ? msg.picks : [];
       picks.forEach((p) => {
         const k = keyOf(p);
         if (annotations[k] !== undefined) p.annotation = annotations[k];
       });
+      // A fresh lock is the whole point of the detail block, so show it; a
+      // removal just keeps the block pointing at the same element when that
+      // element is still locked, and falls back to the newest one when it is
+      // the element that just went away.
+      if (picks.map(keyOf).join("|") !== before) {
+        const stillThere = picks.findIndex((p) => keyOf(p) === beforeIdx);
+        if (stillThere >= 0) {
+          detailIndex = stillThere;
+          renderDetail();
+        } else {
+          focusNewestPick();
+        }
+      }
       renderPicks();
       renderMarkers();
       refreshReport();
@@ -177,6 +193,8 @@
     div.textContent = text;
     ERRORS.prepend(div);
     while (ERRORS.children.length > 30) ERRORS.removeChild(ERRORS.lastChild);
+    const count = $("err-count");
+    if (count) count.textContent = String(liveErrors.length);
   }
 
   // --- viewport geometry --------------------------------------------------
@@ -245,17 +263,13 @@
   }
 
   function renderHover(desc) {
-    if (!desc) {
-      $("hover-selector").textContent = "（鼠标不在页面上）";
-      $("hover-rect").textContent = "";
-      return;
-    }
+    const el = $("hover-line");
+    if (!el) return;
+    if (!desc) { el.textContent = ""; return; }
     const cls = desc.className ? "." + desc.className.split(/\s+/).filter(Boolean).slice(0, 2).join(".") : "";
-    $("hover-selector").textContent = "<" + desc.tag + ">"
-      + (desc.id ? "#" + desc.id : "") + cls;
-    $("hover-rect").textContent = desc.selector
+    el.textContent = "<" + (desc.tag || "?") + ">" + (desc.id ? "#" + desc.id : "") + cls
       + "  ·  " + Math.round(desc.rect.w) + "×" + Math.round(desc.rect.h)
-      + (desc.text ? "  ·  “" + desc.text.slice(0, 40) + "”" : "");
+      + (desc.text ? "  ·  “" + desc.text.slice(0, 32) + "”" : "");
   }
 
   // --- viewport event plumbing -------------------------------------------
@@ -477,28 +491,30 @@
       : "复制失败：" + text.slice(0, 40);
   }
 
-  // Explicit text path: the guaranteed way to deliver Chinese or long text.
-  function sendTypedText() {    const box = $("typebox");
-    const text = box.value;
-    if (!text) return;
-    send({ type: "insert_text", text });
-    box.value = "";
-    $("type-status").textContent = "已发送 " + text.length + " 字到页面";
+  // The 「送入页面文字」 box is gone from the sidebar: a text field plus a send
+  // button next to the picker read as one more thing to fill in, and typing into
+  // the page is what the controlled browser itself is for. The status line stays
+  // (paste/copy feedback reports there); the transport below still works for any
+  // caller that brings its own box.
+  function sendTypedText(text) {
+    const value = String(text === undefined ? "" : text);
+    if (!value) return;
+    send({ type: "insert_text", text: value });
+    const status = $("type-status");
+    if (status) status.textContent = "已发送 " + value.length + " 字到页面";
   }
-  $("btn-send-text").onclick = sendTypedText;
-  $("typebox").addEventListener("keydown", (e) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      sendTypedText();
-    }
-    e.stopPropagation();
-  });
 
   $("btn-back").onclick = () => send({ type: "back" });
   $("btn-forward").onclick = () => send({ type: "forward" });
   $("btn-reload").onclick = () => send({ type: "reload" });
   $("btn-clear-picks").onclick = () => send({ type: "clear_picks" });
-  $("btn-clear-errors").onclick = () => { ERRORS.textContent = ""; };
+  $("btn-clear-errors").onclick = () => {
+    ERRORS.textContent = "";
+    liveErrors.length = 0;
+    const count = $("err-count");
+    if (count) count.textContent = "0";
+    refreshReport();
+  };
   URL_BAR.addEventListener("keydown", (e) => {
     if (e.key === "Enter") {
       let v = URL_BAR.value.trim();
@@ -516,6 +532,241 @@
   // --- selection cards ----------------------------------------------------
   // One card per locked element: what was locked (DOM), and a box for the
   // user's annotation. Cards accumulate; nothing here replaces a previous one.
+  // --- the floating detail block -----------------------------------------
+  // A locked element answers four questions — which one, how to reach it, what
+  // it says, and who owns it — and then offers to hand that answer to whoever
+  // is looking at this panel. It is rendered as the sticky top of the sidebar
+  // so a fresh pick is readable without scrolling and its buttons never leave
+  // reach, and it always describes the pick that just happened.
+  // Standing down: the report builder already turns the whole stack into
+  // Markdown; this block is the one-click path for the element in hand.
+  let detailIndex = -1;        // index into picks, or -1 when nothing is locked
+  let detailNote = "";         // the note typed in this block
+  let statusTimer = null;
+
+  function detailButtons(pick, index) {
+    const text = (pick.text || "").trim();
+    const html = (pick.outerHTML || "").trim();
+    return [
+      ["选择器", pick.selector || "", "selector"],
+      ["HTML", html, "html"],
+      ["文字", text, "text"],
+    ].map(([label, value, kind]) => ({
+      label, kind, value,
+      title: value ? value.slice(0, 90) : "(空)",
+      disabled: !value,
+    })).concat([{
+      label: "全部信息", kind: "info", value: "", title: "选择器 + 文字 + HTML + 归属",
+      disabled: false, index,
+    }]);
+  }
+
+  // One compact line of Markdown-ish text, which is what both the panel's own
+  // report and the chat composer render well.
+  function detailBlock(pick, noteOverride) {
+    const lines = [];
+    // noteOverride lets a stack card build ITS OWN block (its own annotation)
+    // instead of borrowing whatever is typed in the floating detail block.
+    const note = (noteOverride !== undefined ? noteOverride : detailNote || "").trim();
+    if (note) lines.push(note);
+    lines.push("- 选择器: `" + (pick.selector || "?") + "`");
+    if (pick.text) lines.push("- 文字: “" + pick.text.slice(0, 160) + "”");
+    if (pick.owner) lines.push("- 归属: " + ownerText(pick.owner));
+    if (pick.outerHTML) lines.push("- HTML: `" + pick.outerHTML.replace(/`/g, "'").slice(0, 300) + "`");
+    return lines.join("\n");
+  }
+
+  function actionPayload(pick, kind) {
+    if (kind === "selector") return pick.selector || "";
+    if (kind === "html") return (pick.outerHTML || "").trim();
+    if (kind === "text") return (pick.text || "").trim();
+    return detailBlock(pick);
+  }
+
+  // Hand the payload to whoever embedded this panel (dsh's own page, a browser
+  // tab: anyone listening on window.parent). The panel never assumes a parent
+  // is there — in a bare tab the buttons simply copy, which is the fallback.
+  function forwardToHost(kind, text, pick, noteOverride) {
+    let delivered = false;
+    // The annotation travels as its OWN field, not merely baked into `text`:
+    // the embedder decides where the note lands, and a per-field payload
+    // (选择器 / HTML / 文字) carries no prose of its own to carry it in.
+    // detailNote is what is typed in the box right now; pick.annotation is this
+    // pick's stored note.
+    const note = (noteOverride !== undefined
+      ? noteOverride
+      : (detailNote || (pick && pick.annotation) || "")).trim();
+    try {
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage({
+          source: "vco-debug-panel",
+          kind: kind,
+          text: text,
+          selector: pick ? (pick.selector || "") : "",
+          annotation: note,
+          insert: kind === "insert",
+        }, "*");
+        delivered = true;
+      }
+    } catch (e) { delivered = false; }
+    return delivered;
+  }
+
+  function flashDetail(msg, ok) {
+    const el = $("detail-status");
+    if (!el) return;
+    el.textContent = msg;
+    el.className = ok ? "ok" : "";
+    if (statusTimer) clearTimeout(statusTimer);
+    statusTimer = setTimeout(() => {
+      if (el) { el.textContent = ""; el.className = ""; }
+      statusTimer = null;
+    }, 2600);
+  }
+
+  function copyText(text) {
+    if (!navigator.clipboard) return Promise.resolve(false);
+    return navigator.clipboard.writeText(text).then(() => true, () => false);
+  }
+
+  function renderDetail() {
+    const card = $("detail-card");
+    if (!card) return;
+    card.textContent = "";
+    const pick = detailIndex >= 0 ? picks[detailIndex] : null;
+    if (!pick) return;
+
+    const box = document.createElement("div");
+    box.className = "fcard";
+    box.onmouseenter = () => { hotKey = keyOf(pick); renderMarkers(); };
+    box.onmouseleave = () => { hotKey = null; renderMarkers(); };
+
+    const head = document.createElement("div");
+    head.className = "fcard-head";
+    const num = document.createElement("span");
+    num.className = "pick-num";
+    num.textContent = String(detailIndex + 1);
+    const title = document.createElement("span");
+    title.className = "grow";
+    const cls = pick.className
+      ? "." + pick.className.split(/\s+/).filter(Boolean).slice(0, 3).join(".") : "";
+    title.textContent = "<" + (pick.tag || "?") + ">" + (pick.id ? "#" + pick.id : "") + cls;
+    const close = document.createElement("button");
+    close.textContent = "×";
+    // Delete, not collapse: the block is the one place a locked element is
+    // managed, so its × drops the pick from the server's stack (the server
+    // echoes the new stack back). Collapsing is what the panel's own footer
+    // does when you pick the next element.
+    close.title = "删除这个锁定元素";
+    close.onclick = () => { send({ type: "remove_pick", selector: keyOf(pick) }); };
+    head.append(num, title, close);
+
+    const sel = document.createElement("div");
+    sel.className = "fcard-sel";
+    sel.textContent = pick.selector || "(no selector)";
+
+    const meta = document.createElement("div");
+    meta.className = "fcard-meta";
+    meta.textContent = (pick.rect ? Math.round(pick.rect.w) + "×" + Math.round(pick.rect.h) : "?×?")
+      + "  ·  role " + (pick.role || "?")
+      + "  ·  children " + (pick.childCount != null ? pick.childCount : "?")
+      + (pick.missing ? "  ·  ⚠ 已不在页面上" : "");
+
+    const owner = document.createElement("div");
+    owner.className = "fcard-meta";
+    owner.textContent = "归属: " + (ownerText(pick.owner) || "(无)");
+
+    box.append(head, sel, meta, owner);
+
+    if (pick.outerHTML) {
+      const html = document.createElement("div");
+      html.className = "fcard-html";
+      html.textContent = pick.outerHTML;
+      html.title = pick.outerHTML;
+      box.appendChild(html);
+    }
+
+    const anno = document.createElement("input");
+    anno.className = "anno";
+    anno.placeholder = "这里怎么了？（例：点了没反应）";
+    if (annotations[detailKey()] === undefined && pick.annotation) {
+      annotations[detailKey()] = pick.annotation;
+    }
+    anno.value = detailNote !== "" ? detailNote
+      : (annotations[detailKey()] !== undefined ? annotations[detailKey()]
+        : (pick.annotation || ""));
+    anno.oninput = (ev) => {
+      detailNote = ev.target.value;
+      const key = detailKey();
+      annotations[key] = detailNote;
+      const item = picks.find((q) => keyOf(q) === key);
+      if (item) item.annotation = detailNote;
+      refreshReport();
+      queueAnnotation(key, detailNote);
+    };
+    anno.onkeydown = (ev) => ev.stopPropagation();
+    box.appendChild(anno);
+
+    const acts = document.createElement("div");
+    acts.className = "fcard-acts";
+    detailButtons(pick, detailIndex).forEach((spec) => {
+      const b = document.createElement("button");
+      b.textContent = spec.label;
+      b.title = spec.title;
+      b.disabled = spec.disabled;
+      if (spec.kind === "info") {
+        b.className = "wide";
+        b.onclick = () => {
+          const payload = detailBlock(pick);
+          if (forwardToHost("info", payload, pick)) {
+            flashDetail("已送到对话：等它在输入框里出现再决定发送", true);
+            return;
+          }
+          copyText(payload).then((ok) => flashDetail(
+            ok ? "没有可插入的页面，已复制全部信息" : "复制失败", ok));
+        };
+        acts.appendChild(b);
+        return;
+      }
+      b.onclick = () => {
+        const payload = actionPayload(pick, spec.kind);
+        if (!payload) return;
+        // Inside dsh the panel pushes into the chat composer; on its own it
+        // copies, which is the same information with one extra paste.
+        if (forwardToHost("insert-text", payload, pick)) {
+          flashDetail("已送到对话输入框：" + spec.label, true);
+          return;
+        }
+        copyText(payload).then((ok) => flashDetail(
+          ok ? "已复制 " + spec.label + "（" + payload.length + " 字）" : "复制失败", ok));
+      };
+      acts.appendChild(b);
+    });
+    box.appendChild(acts);
+
+    const status = document.createElement("div");
+    status.id = "detail-status";
+    box.appendChild(status);
+
+    card.appendChild(box);
+  }
+
+  function detailKey() {
+    const pick = detailIndex >= 0 ? picks[detailIndex] : null;
+    return pick ? keyOf(pick) : "";
+  }
+
+  // A new pick is what this block describes: jump to the newest one, and keep
+  // the sidebar at its top so the block is on screen when the pick arrives.
+  function focusNewestPick() {
+    detailNote = "";
+    if (!picks.length) { detailIndex = -1; renderDetail(); return; }
+    detailIndex = picks.length - 1;
+    renderDetail();
+    const right = $("right");
+    if (right) right.scrollTop = 0;
+  }
+
   function renderPicks() {
     const stack = $("picks-stack");
     $("picks-count").textContent = String(picks.length);
@@ -533,11 +784,17 @@
       const empty = document.createElement("div");
       empty.className = "card";
       empty.id = "picks-empty";
-      empty.textContent = "⌘/Ctrl + 点击视口里的元素 → 这里出现一张卡片；再点别的 → 再出现一张。普通点击照常操作页面。";
+      empty.textContent = "⌘/Ctrl + 点击视口里的元素即可锁定。";
       stack.appendChild(empty);
       return;
     }
-    picks.forEach((p, i) => {
+    // Newest first: the card for the element you just clicked belongs at the
+    // FRONT of the stack instead of under three older ones. The number badge
+    // and the remove payload still use the pick's own index, so labels and
+    // removal stay stable while the order flips.
+    const order = picks.map((p, i) => i).reverse();
+    order.forEach((i) => {
+      const p = picks[i];
       const key = keyOf(p);
       const card = document.createElement("div");
       card.className = "pick-card";
@@ -608,7 +865,31 @@
       };
       ta.onkeydown = (ev) => ev.stopPropagation();
 
-      card.append(close, head, meta, path, attrs, text, html, ta);
+      // Each card carries its own pair: DOM info + ITS annotation, straight to
+      // the chat composer. The annotation is sent as a field as well, so the
+      // embedder never has to parse it back out of the prose.
+      const acts = document.createElement("div");
+      acts.className = "pick-acts";
+      const put = document.createElement("button");
+      put.textContent = "插入对话";
+      put.title = "把这张卡片的 DOM 信息 + annotation 送进对话输入框";
+      const putStatus = document.createElement("span");
+      putStatus.className = "pick-status";
+      put.onclick = (ev) => {
+        ev.stopPropagation();
+        const note = annotations[key] !== undefined ? annotations[key] : (p.annotation || "");
+        const payload = detailBlock(p, note);
+        if (forwardToHost("info", payload, p, note)) {
+          putStatus.textContent = "已送到对话输入框";
+          return;
+        }
+        copyText(payload).then((ok) => {
+          putStatus.textContent = ok ? "已复制（没有可插入的页面）" : "复制失败";
+        });
+      };
+      acts.append(put, putStatus);
+
+      card.append(close, head, meta, path, attrs, text, html, ta, acts);
       stack.appendChild(card);
       if (key === focusedSel && caret != null) ta.focus();
     });
@@ -911,6 +1192,7 @@
 
   fitStage();
   renderDiag();
+  renderDetail();
   refreshReport();
   connect();
 })();
