@@ -369,6 +369,9 @@ class DebugSession:
         # directories. The panel reads them so an automated run shows up in the
         # same place you inspect pages by hand.
         self.runs_root = Path(runs_root) if runs_root else Path("cache")
+        # Where a pick's screenshot is kept. Beside the webbug/webshot output,
+        # so every picture this tool takes lands in one place.
+        self.shots_dir = Path(".screenshot")
         self.dsh_auth = dsh_auth
         self.extra_headers = dict(extra_headers or {})
         self.dsh_secret: bytes | None = load_dsh_secret() if dsh_auth else None
@@ -626,6 +629,40 @@ class DebugSession:
             )
         except Exception:  # noqa: BLE001
             return None
+
+    async def _lock_screenshot(self, label: str) -> dict | None:
+        """Capture the page at lock time, send it inline, and keep it on disk.
+
+        The panel already renders frames as data URIs over the same socket, so
+        the screenshot rides the existing channel instead of being written to
+        disk and served back over a second route: one image definition, two
+        consumers. The copy on disk is what a report can point at later, and it
+        lands in `.screenshot/` beside the webbug/webshot output, named the same
+        way.
+
+        Returns ``{path, png}`` (absolute path and base64 PNG) or None.
+        """
+        if not self._page or self._page.is_closed():
+            return None
+        try:
+            png = await self._page.screenshot(type="png", full_page=True)
+        except Exception:  # noqa: BLE001
+            try:
+                png = await self._page.screenshot(type="png", full_page=False)
+            except Exception:  # noqa: BLE001
+                return None
+        stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime())
+        slug = re.sub(r"[^a-z0-9]+", "-", (label or "pick").lower()).strip("-")[:40] or "pick"
+        target = self.shots_dir / f"pick-{stamp}-{int(time.time() * 1000) % 1000:03d}-{slug}.png"
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(png)
+        except OSError:
+            target = None
+        return {
+            "path": str(target) if target else "",
+            "png": base64.b64encode(png).decode("ascii"),
+        }
 
     async def _teardown_browser(self) -> None:
         try:
@@ -991,6 +1028,19 @@ class DebugSession:
                     except Exception:  # noqa: BLE001
                         desc["pageUrl"] = self.last_url or ""
                         desc["pageTitle"] = ""
+                    # The picture of what was just locked. Taken here rather
+                    # than at export: the page may have moved on by the time a
+                    # report is built, and this is the only moment that knows
+                    # what the operator was looking at.
+                    #
+                    # It rides the socket as a data URI because the panel
+                    # already renders frames that way — one image definition,
+                    # two consumers — and the file copy in `.screenshot/` is
+                    # what a report can point at afterwards.
+                    shot = await self._lock_screenshot(sel)
+                    if shot:
+                        desc["shotPath"] = shot["path"]
+                        desc["shot"] = shot["png"]
                     if sel in self.annotations:
                         desc["annotation"] = self.annotations[sel]
                     merged = False

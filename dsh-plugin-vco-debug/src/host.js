@@ -35,6 +35,12 @@ module.exports = {
       ? config.workspace
       : (process.env.VCO_HOME || process.cwd())
 
+    // Where pick screenshots land. Inside the workspace, so the path written
+    // into the chat is one the reader can actually open, and so the shot route
+    // has a single directory to confine itself to.
+    const SHOTS_DIR = path.resolve(root, '.vco-runtime', 'shots')
+    try { fs.mkdirSync(SHOTS_DIR, { recursive: true }) } catch (e) { /* reported on write */ }
+
     function note(text) {
       state.log.push(String(text))
       while (state.log.length > 40) state.log.shift()
@@ -181,6 +187,38 @@ module.exports = {
           res.end(JSON.stringify(snapshot()))
         },
       }), 'vco-debug:status-route')
+
+      // Screenshots the pick took, served from the SAME origin as the page.
+      //
+      // The panel and this route are on different origins, so the panel cannot
+      // hand the chat a URL it can display; what it can hand over is the
+      // absolute path (the reader has a filesystem) plus this route, which the
+      // page CAN load. Paths are confined to the shots directory: no traversal
+      // out of it, whatever a request asks for.
+      ctx.effect(() => server.register({
+        kind: 'prefix',
+        path: '/plugins/vco-debug/shot/',
+        handler: (req, res) => {
+          const asked = decodeURIComponent(String(req.url || '').split('?')[0])
+            .slice('/plugins/vco-debug/shot/'.length)
+          const full = path.resolve(SHOTS_DIR, asked)
+          if (!full.startsWith(SHOTS_DIR + path.sep) || !fs.existsSync(full)) {
+            res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' })
+            res.end('not found')
+            return
+          }
+          try {
+            const ext = path.extname(full).toLowerCase()
+            const type = ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg'
+              : ext === '.webp' ? 'image/webp' : 'image/png'
+            res.writeHead(200, { 'content-type': type, 'cache-control': 'no-store' })
+            res.end(fs.readFileSync(full))
+          } catch (e) {
+            res.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' })
+            res.end(String(e && e.message))
+          }
+        },
+      }), 'vco-debug:shot-route')
     } else {
       note('webServer 不可用，客户端将自行探测面板端口')
     }
