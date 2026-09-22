@@ -11,8 +11,11 @@
     - id: vco-debug
       name: dsh-plugin-vco-debug
       config:
-        # Where the vco checkout lives.
-        workspace: <path-to-vco-repo>
+        # Where the vco checkout lives. Set VCO_WORKSPACE in your shell, or
+        # replace this line with the absolute path of your local vco checkout.
+        # (The patch loader evaluates `!!js` expressions against process.env.)
+        # When it resolves empty, src/host.js falls back to $VCO_HOME, then cwd.
+        workspace: !!js process.env.VCO_WORKSPACE ?? ''
         # Interpreter that can `import playwright` and `import vco` (vco is
         # imported from `workspace`, so it does not need installing).
         #
