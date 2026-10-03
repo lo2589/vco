@@ -387,7 +387,36 @@
 
   let composing = false;
   let lastPasteAt = 0;
-  let lastComposedAt = 0;
+
+  // One user action, one delivery.
+  //
+  // Browsers disagree about which events a single edit fires, and the extra
+  // event always carries the *same text*: WebKit reports an IME commit as both
+  // `compositionend` and a cancelable `insertText` beforeinput, and a paste as
+  // both `paste` and `insertFromPaste` beforeinput. Each handler below used to
+  // send on its own, so one commit landed in the page twice — the reported
+  // symptom was typed words arriving doubled ("你好" → "你好你好").
+  //
+  // The guard keys on (text, path): the same text from a DIFFERENT path inside
+  // the window is one action seen twice and is dropped; the same text from the
+  // SAME path is the user typing it again ("aa", "哈哈") and always passes.
+  // A fixed dedupe window would have to choose between breaking repeated
+  // characters and leaking doubled IME commits; keying on the path needs
+  // neither.
+  const DEDUPE_MS = 350;
+  let lastSend = { text: "", via: "", at: 0 };
+  function sendText(text, via) {
+    const value = String(text === undefined ? "" : text);
+    if (!value) return false;
+    const now = Date.now();
+    if (value === lastSend.text && via !== lastSend.via && now - lastSend.at < DEDUPE_MS) {
+      return false;
+    }
+    lastSend = { text: value, via: via, at: now };
+    send({ type: "insert_text", text: value });
+    return true;
+  }
+
   MASK.addEventListener("compositionstart", () => { composing = true; });
   MASK.addEventListener("compositionupdate", (e) => {
     $("type-status").textContent = "输入中：" + (e.data || "");
@@ -397,8 +426,7 @@
     const text = e.data || MASK.textContent || "";
     MASK.textContent = "";
     $("type-status").textContent = "";
-    lastComposedAt = Date.now();
-    if (text) send({ type: "insert_text", text });
+    if (text) sendText(text, "ime");
   });
   // Text the browser actually inserted into the mask (typing, IME leftovers).
   MASK.addEventListener("beforeinput", (e) => {
@@ -409,19 +437,23 @@
       e.preventDefault();
       let text = e.data || "";
       if (!text && e.dataTransfer) text = e.dataTransfer.getData("text/plain") || "";
-      if (text) send({ type: "insert_text", text });
+      if (text) sendText(text, "beforeinput");
     }
   });
-  // Safety net: never let the mask keep text (it is only a keyboard sink). The
-  // composition guard matters: a browser that commits the composition into the
-  // mask *after* compositionend would otherwise send the same text twice.
+  // Safety net: never let the mask keep text (it is only a keyboard sink).
+  //
+  // A browser that commits the composition into the mask *after*
+  // compositionend lands here carrying the text just sent by the IME path; the
+  // (text, path) guard in sendText drops it as the duplicate it is. An earlier
+  // version used a blanket 400 ms silence after every IME commit instead, which
+  // also swallowed real input typed in that window — one word committed and the
+  // fast next character vanished.
   MASK.addEventListener("input", () => {
     if (composing) return;
     const text = MASK.textContent;
     if (!text) return;
     MASK.textContent = "";
-    if (Date.now() - lastComposedAt < 400) return;
-    send({ type: "insert_text", text });
+    sendText(text, "input");
   });
   MASK.addEventListener("paste", (e) => {
     counters.pasted++;
@@ -429,7 +461,7 @@
     const text = (e.clipboardData && e.clipboardData.getData("text/plain")) || "";
     if (text) {
       lastPasteAt = Date.now();
-      send({ type: "insert_text", text });
+      sendText(text, "paste");
       $("type-status").textContent = "已粘贴 " + text.length + " 字";
     }
   });
@@ -451,7 +483,7 @@
         if (navigator.clipboard && navigator.clipboard.readText) {
           navigator.clipboard.readText().then((text) => {
             if (text) {
-              send({ type: "insert_text", text });
+              sendText(text, "clipboard");
               $("type-status").textContent = "已粘贴 " + text.length + " 字";
             }
           }).catch(() => {});
@@ -499,6 +531,10 @@
   function sendTypedText(text) {
     const value = String(text === undefined ? "" : text);
     if (!value) return;
+    // Deliberately NOT through sendText: this is one explicit command from a
+    // caller's own box, not a browser input event, so nothing else can be a
+    // duplicate of it — and deduping it against a paste that just happened
+    // would swallow a send the user actually asked for.
     send({ type: "insert_text", text: value });
     const status = $("type-status");
     if (status) status.textContent = "已发送 " + value.length + " 字到页面";
