@@ -66,6 +66,9 @@ vco click --at 1164,92            # 真实点击坐标；click --target "..." �
                                   # --no-click-trace 跳过点击后那张带标记的截图
                                   # --no-verify 跳过点击前的「目标区域是否稳定」检查；
                                   # --verify-threshold 0.8 设像素相似度门槛（默认 0.8）
+                                  # --double 双击；--button right 右键（弹上下文菜单）
+vco key cmd+space                 # 在当前焦点按一个键或组合键；--repeat N 连按
+vco scroll --amount 5             # 滚轮格数，正数向下、负数向上；--at x,y（默认鼠标当前位置）
 vco type --target "用户名" --text alice
                                   # 定位输入框并打字；中文等用 --paste 走剪贴板
 vco type --target "密码" --text-env PASSWORD
@@ -368,6 +371,10 @@ API key 只从 settings JSON 读取，不会复制进仓库或运行结果。
 `scroll.amount` 是滚轮格数，正数向下。`type` 打进当前键盘焦点（非 ASCII 走剪贴板粘贴）。`key` 是单键或组合键，前面各段必须是修饰键（`cmd`/`ctrl`/`option`/`alt`/`shift`/`fn`）；`cmd`、`return`、`esc` 等会规范成 pyautogui 的键名。
 
 `run` 每一步的提示里都带着之前做过的动作，以及每个动作之后屏幕变没变（`-> screen did NOT change`）。模型据此不再重复点一个没反应的地方，也能判断该不该 done。同一份列表也以 `history` 字段存进每个 `step-NNN-action.json`。
+
+执行器拒绝的动作（比如不存在的键名）会以 `-> FAILED: …` 告诉模型，不会让整次运行崩掉。加 `--execute` 时，连续 3 个动作都没让屏幕变化，运行就以 `"status": "stuck"` 停下（`--max-unchanged N` 调整，0 表示不停）；`wait` 既不计数也不清零。
+
+模型类 provider 下，只要装了 OCR 后端，`run` 默认把本地 OCR 识别出的文字位置作为提示交给模型（`--no-ocr` 关掉）。发往本机地址的请求（本地 Ollama、本地 OCR 服务）一律不走 `HTTP_PROXY`。
 
 ## OCR 接口
 

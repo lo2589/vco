@@ -1378,6 +1378,79 @@ class LoopHistoryTests(unittest.TestCase):
         )
         self.assertIn("1. right_click cell=2 -> screen did NOT change", provider.tasks[1])
 
+    def test_three_dead_actions_in_a_row_stop_the_run_as_stuck(self):
+        click = {"type": "click", "target": {"cell": 2, "offset_x": 0.5, "offset_y": 0.5}}
+        result, provider, executor, _ = self.run_loop(
+            lambda executor: FakeCapture(),
+            [click, {"type": "wait", "seconds": 0.1}, click, click, click],
+        )
+        self.assertEqual(result.status, "stuck")
+        # the wait in the middle neither counts nor resets the streak
+        self.assertEqual(len(executor.actions), 4)
+        self.assertIn("3 actions in a row", result.reason)
+
+    def test_failed_action_is_reported_to_the_model_not_raised(self):
+        class RejectingExecutor(DryRunExecutor):
+            def execute(self, action):
+                if action.type == "key":
+                    raise ValueError("unknown key(s): bogus")
+                super().execute(action)
+
+        provider = RecordingProvider(
+            [{"type": "key", "keys": "bogus"}, {"type": "done", "reason": "ok"}]
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            result = ComputerUseLoop(
+                capture=FakeCapture(),
+                provider=provider,
+                executor=RejectingExecutor(),
+                region=Region(x=0, y=0, width=240, height=120),
+                grid=GridSpec(rows=2, cols=4),
+                artifact_root=Path(temp_dir),
+                settle_seconds=0,
+            ).run("t", max_steps=3)
+        self.assertEqual(result.status, "done")
+        self.assertIn("1. key bogus -> FAILED: unknown key(s): bogus", provider.tasks[1])
+
+
+class LoopbackOpenerTests(unittest.TestCase):
+    def test_loopback_detection(self):
+        from vco.net import is_loopback_url
+
+        for url in ("http://127.0.0.1:11434/api/chat", "http://localhost:8765/v1/ocr",
+                    "http://[::1]:9000/", "http://127.8.0.1/"):
+            self.assertTrue(is_loopback_url(url), url)
+        for url in ("https://api.openai.com/v1", "http://192.168.1.5:11434/",
+                    "http://localhost.evil.com/"):
+            self.assertFalse(is_loopback_url(url), url)
+
+    def test_loopback_skips_the_environment_proxy(self):
+        import os
+        import threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        from unittest import mock
+
+        from vco.net import open_url
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b"direct")
+
+            def log_message(self, *args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        try:
+            # a proxy that does not exist: going through it would fail
+            with mock.patch.dict(os.environ, {"HTTP_PROXY": "http://127.0.0.1:9", "http_proxy": "http://127.0.0.1:9"}):
+                with open_url(f"http://127.0.0.1:{server.server_port}/", timeout=5) as resp:
+                    self.assertEqual(resp.read(), b"direct")
+        finally:
+            server.shutdown()
+
 
 if __name__ == "__main__":
     unittest.main()

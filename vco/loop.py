@@ -90,6 +90,7 @@ class ComputerUseLoop:
         grid: GridSpec,
         artifact_root: Path,
         settle_seconds: float = 0.7,
+        max_unchanged: int = 3,
     ):
         self.capture = capture
         self.provider = provider
@@ -98,6 +99,10 @@ class ComputerUseLoop:
         self.grid = grid
         self.artifact_root = artifact_root
         self.settle_seconds = settle_seconds
+        # Stop after this many consecutive actions that left the screen as it
+        # was: the model is stuck, and more steps only repeat the miss.
+        # 0 disables the check.
+        self.max_unchanged = max_unchanged
         self.mapper = GridMapper(region, grid)
 
     def run(self, task: str, *, max_steps: int = 12) -> LoopResult:
@@ -112,15 +117,27 @@ class ComputerUseLoop:
 
         history: list[str] = []
         previous = None  # (frame image, history index) of the last executed action
+        unchanged = 0
         for step in range(1, max_steps + 1):
             frame = self.capture.capture(self.region)
             if previous is not None:
-                before, index = previous
+                before, index, waited = previous
                 changed = _screen_changed(before, frame.image)
                 history[index] += (
                     " -> screen changed" if changed else " -> screen did NOT change"
                 )
                 previous = None
+                # Waiting is allowed to change nothing; it neither counts
+                # toward being stuck nor clears the streak.
+                if not waited:
+                    unchanged = 0 if changed else unchanged + 1
+            if self.max_unchanged and unchanged >= self.max_unchanged:
+                reason = (
+                    f"stuck: {unchanged} actions in a row did not change the "
+                    "screen; history: " + " | ".join(history[-unchanged:])
+                )
+                emit(run_dir, "run_end", step=step, summary=reason)
+                return LoopResult("stuck", step - 1, reason, run_dir)
             gridded = render_numbered_grid(frame.image, self.grid)
             clean_path = run_dir / f"step-{step:03d}-clean.png"
             grid_path = run_dir / f"step-{step:03d}-grid.png"
@@ -202,9 +219,18 @@ class ComputerUseLoop:
                 return LoopResult("done", step, action.reason, run_dir)
 
             assert resolved is not None
-            self.executor.execute(resolved)
-            history.append(f"{step}. {_action_summary(action)}")
-            previous = (frame.image, len(history) - 1)
+            try:
+                self.executor.execute(resolved)
+            except ValueError as exc:
+                # A bad key name and the like: tell the model next step
+                # instead of killing the run. The screen did not change, so
+                # this counts toward being stuck.
+                history.append(f"{step}. {_action_summary(action)} -> FAILED: {exc}")
+                emit(run_dir, "action_error", step=step, summary=str(exc))
+                unchanged += 1
+            else:
+                history.append(f"{step}. {_action_summary(action)}")
+                previous = (frame.image, len(history) - 1, action.type == "wait")
             if self.settle_seconds:
                 time.sleep(self.settle_seconds)
 

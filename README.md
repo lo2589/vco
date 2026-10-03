@@ -73,6 +73,9 @@ vco click --at 1164,92            # real mouse click; click --target "..." locat
                                   # --no-click-trace skips the post-click marked screenshot
                                   # --no-verify skips the pre-click region-stability check;
                                   # --verify-threshold 0.8 sets the pixel-similarity bar (default 0.8)
+                                  # --double double-clicks; --button right opens context menus
+vco key cmd+space                 # press a key or chord at the current focus; --repeat N
+vco scroll --amount 5             # wheel notches, + down / - up; --at x,y (default: where the pointer is)
 vco type --target "Username" --text alice
                                   # locate a text field and type into it; --paste uses the clipboard
 vco type --target "Password" --text-env PASSWORD
@@ -395,6 +398,10 @@ Cells are one-based, row-major. `offset_x`/`offset_y` must be in `[0,1]`. Extra 
 `scroll.amount` is wheel notches, positive = down. `type` goes to whatever has keyboard focus (non-ASCII is pasted via the clipboard). `key` takes one key or a chord whose leading parts are modifiers (`cmd`/`ctrl`/`option`/`alt`/`shift`/`fn`); `cmd`, `return`, `esc`, … are normalized to pyautogui names.
 
 In `run`, every step's prompt carries the actions already taken and whether each one changed the screen (`-> screen did NOT change`), so the model stops repeating a dead click and can tell when it is done. The same list is saved as `history` in each `step-NNN-action.json`.
+
+An action the executor rejects (say, an unknown key name) is reported back as `-> FAILED: …` instead of ending the run. With `--execute`, three actions in a row that leave the screen unchanged stop the run with `"status": "stuck"` (`--max-unchanged N`, 0 = never); `wait` neither counts nor resets the streak.
+
+For model providers, `run` hands the model local OCR text positions as hints by default when an OCR backend is installed (`--no-ocr` to turn it off). Requests to loopback (local Ollama, a local OCR service) never go through `HTTP_PROXY`.
 
 ## OCR interface
 

@@ -25,7 +25,7 @@ from .executor import (
 from .geometry import GridMapper
 from .grid import render_numbered_grid
 from .loop import ComputerUseLoop
-from .models import GridSpec, Region, parse_action
+from .models import GridSpec, Region, normalize_keys, parse_action
 from .ocr import OCRRequest, create_ocr_backend
 from .ocr_assist import OCRAssistProvider
 from .ocr_server import serve_ocr
@@ -374,6 +374,19 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--execute", action="store_true", help="enable real mouse input")
     run.add_argument("--max-steps", type=int, default=12)
     run.add_argument("--settle", type=float, default=0.7)
+    run.add_argument(
+        "--no-ocr",
+        action="store_true",
+        help="do not hand the model local OCR text positions as hints "
+        "(on by default for model providers when an OCR backend is installed)",
+    )
+    run.add_argument(
+        "--max-unchanged",
+        type=int,
+        default=3,
+        help="stop as 'stuck' after N actions in a row leave the screen unchanged "
+        "(0 = never; ignored in dry-run, where nothing ever changes)",
+    )
     run.add_argument("--artifacts", type=Path, default=Path("cache/runs"))
     _add_grid_args(run)
 
@@ -466,8 +479,25 @@ def build_parser() -> argparse.ArgumentParser:
         default=0.8,
         help="minimum pixel similarity for the target region (default 0.8)",
     )
+    click.add_argument("--double", action="store_true", help="double-click instead")
+    click.add_argument(
+        "--button", choices=("left", "right", "middle"), default="left",
+        help="mouse button (right opens context menus)",
+    )
     _add_provider_args(click, default="none")
     _add_grid_args(click)
+
+    key = commands.add_parser(
+        "key", help="press a key or chord at the current focus, e.g. cmd+space"
+    )
+    key.add_argument("keys", help='one key or a chord: "enter", "cmd+l", "cmd+shift+t"')
+    key.add_argument("--repeat", type=int, default=1, help="press it N times")
+
+    scroll = commands.add_parser(
+        "scroll", help="scroll the wheel; positive --amount scrolls down"
+    )
+    scroll.add_argument("--amount", type=int, required=True, help="wheel notches; + down, - up")
+    scroll.add_argument("--at", type=_point, help="x,y to scroll over; default: where the pointer is")
 
     type_cmd = commands.add_parser(
         "type", help="locate a text field and type/paste text into it"
@@ -976,6 +1006,15 @@ def _mark_target(image: Image.Image, point: tuple[int, int]) -> Image.Image:
     )
     draw.ellipse((x - 2, y - 2, x + 2, y + 2), fill=(255, 0, 0, 255))
     return Image.alpha_composite(marked, overlay).convert("RGB")
+
+
+def _click_action(args, point) -> ResolvedAction:
+    return ResolvedAction(
+        type="click",
+        start=point,
+        clicks=2 if getattr(args, "double", False) else 1,
+        button=getattr(args, "button", "left"),
+    )
 
 
 def _resolve_text_target(args, target_text: str, *, prefix: str):
@@ -1512,10 +1551,38 @@ def main(argv=None) -> int:
         )
         return 0
 
+    if args.command == "key":
+        try:
+            keys = normalize_keys(args.keys)
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
+        if args.repeat < 1:
+            raise SystemExit("--repeat must be at least 1")
+        executor = PyAutoGuiExecutor()
+        try:
+            for _ in range(args.repeat):
+                executor.execute(ResolvedAction(type="key", keys=keys))
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
+        print(json.dumps({"pressed": "+".join(keys), "repeat": args.repeat}))
+        return 0
+
+    if args.command == "scroll":
+        if args.amount == 0 or abs(args.amount) > 100:
+            raise SystemExit("--amount must be non-zero and within ±100")
+        import pyautogui
+
+        at = args.at or tuple(pyautogui.position())
+        PyAutoGuiExecutor().execute(
+            ResolvedAction(type="scroll", start=at, amount=args.amount)
+        )
+        print(json.dumps({"scrolled": args.amount, "x": at[0], "y": at[1]}))
+        return 0
+
     if args.command in ("find", "click"):
         if args.command == "click" and args.at is not None:
             x, y = args.at
-            PyAutoGuiExecutor().execute(ResolvedAction(type="click", start=(x, y)))
+            PyAutoGuiExecutor().execute(_click_action(args, (x, y)))
             record = {"clicked": True, "x": x, "y": y}
             if not args.no_click_trace:
                 args.dir.mkdir(parents=True, exist_ok=True)
@@ -1634,9 +1701,7 @@ def main(argv=None) -> int:
                     record["record"] = str(json_path)
                     print(json.dumps(record, indent=2, ensure_ascii=False))
                     return 2
-            PyAutoGuiExecutor().execute(
-                ResolvedAction(type="click", start=resolved.start)
-            )
+            PyAutoGuiExecutor().execute(_click_action(args, resolved.start))
             record["executed"] = True
             if not args.no_click_trace:
                 post, region = _capture_for_args(args)
@@ -2004,6 +2069,20 @@ def main(argv=None) -> int:
         raise SystemExit("--max-steps must be at least 1")
     if args.settle < 0:
         raise SystemExit("--settle cannot be negative")
+    if (
+        not args.ocr_backend
+        and not args.no_ocr
+        and args.provider in {"ollama", "openai", "minimax", "glm"}
+    ):
+        # OCR hints give the model exact positions of every visible word, which
+        # is what it is worst at estimating from pixels. Opt-out, not opt-in,
+        # but never a reason to refuse to run.
+        try:
+            create_ocr_backend("auto", timeout=args.timeout)
+        except (RuntimeError, ValueError) as exc:
+            print(f"vco run: continuing without OCR hints ({exc})", file=sys.stderr)
+        else:
+            args.ocr_backend = "auto"
     executor = PyAutoGuiExecutor() if args.execute else DryRunExecutor()
     loop = ComputerUseLoop(
         capture=PillowScreenCapture(),
@@ -2013,6 +2092,7 @@ def main(argv=None) -> int:
         grid=_grid(args),
         artifact_root=args.artifacts,
         settle_seconds=args.settle,
+        max_unchanged=args.max_unchanged if args.execute else 0,
     )
     result = loop.run(args.task, max_steps=args.max_steps)
     print(

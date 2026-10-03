@@ -403,6 +403,7 @@ def screen_run(arguments: dict) -> dict:
         grid=GridSpec(rows=16, cols=16),
         artifact_root=artifact_root,
         settle_seconds=float(arguments.get("settle_seconds", 1)),
+        max_unchanged=3 if execute else 0,
     )
     with contextlib.redirect_stdout(io.StringIO()):
         result = loop.run(task, max_steps=max_steps)
