@@ -41,6 +41,17 @@ vco debug http://127.0.0.1:3080/
                                   # a browser you watch and drive yourself; lock elements → export
                                   # "where it broke / who owns it"; panel on :8767; `webclick --panel`
                                   # runs the automation inside this very browser
+                                  # --import-chrome reuses your real Chrome profile so cookies/login carry over
+                                  # --header 'Authorization: Bearer …' (repeatable) injects extra headers
+                                  # --runs-root <dir> is where the panel reads events.jsonl from (default: cache)
+vco debug-ask 'what does this form expect?' --llm-base https://api.openai.com/v1 \
+                                  --llm-key-env OPENAI_API_KEY --llm-model gpt-4o
+                                  # one-shot visual Q&A on the persistent debug profile: reuses the same
+                                  # cookies as `vco debug`, optionally jumps to --target first, screenshots,
+                                  # asks the LLM, prints the answer as JSON
+vco watch                          # local event-timeline server on :8766; the debug panel reads it
+                                  # to render run history (events.jsonl + per-step screenshots) for
+                                  # `webclick` / `webrun` / `watch` itself; default cache root: ./cache
 ```
 
 Desktop (OCR first; the real mouse moves only via `click`):
@@ -49,8 +60,19 @@ Desktop (OCR first; the real mouse moves only via `click`):
 vco shot                          # screenshot; --region x,y,w,h for a sub-region;
                                   # --display 2 selects a secondary display (default: main);
                                   # coordinates are always global logical pixels, ready for click
+vco gridshot --rows 10 --cols 10  # like shot, but lays a numbered N×N grid over the image
+                                  # and saves the mapping.json so cells → screen coordinates
+                                  # can be resolved offline (the same grid `find`/`click` show the model)
+vco extendgrid --clean ./.screenshot/gridshot-clean.png --cell 23 \
+               --from-rows 10 --from-cols 10 --rows 4 --cols 4
+                                  # zoom into one cell of a previous gridshot and render a finer
+                                  # 4×4 grid; iterate until the model has a tight enough target box
+                                  # without any vision API call
 vco find --target "CODEX"         # locate (dry-run): OCR first, draws a translucent red circle on hit
 vco click --at 1164,92            # real mouse click; click --target "..." locates first
+                                  # --no-click-trace skips the post-click marked screenshot
+                                  # --no-verify skips the pre-click region-stability check;
+                                  # --verify-threshold 0.8 sets the pixel-similarity bar (default 0.8)
 vco type --target "Username" --text alice
                                   # locate a text field and type into it; --paste uses the clipboard
 vco type --target "Password" --text-env PASSWORD

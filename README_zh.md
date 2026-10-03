@@ -38,6 +38,16 @@ vco webdebug http://127.0.0.1:9005 --task '我翻上去看东西，发了条消�
 vco debug http://127.0.0.1:3080/
                                   # 你在旁边看着、自己也动手的浏览器；锁定元素→导出「哪里错了、谁错了」
                                   # 面板 :8767；webclick --panel 可以让自动化跑在这个浏览器里
+                                  # --import-chrome 复用你真实 Chrome 的 profile，cookie/登录态直接带过来
+                                  # --header 'Authorization: Bearer …'（可多次）注入额外请求头
+                                  # --runs-root <目录> 面板读 events.jsonl 的位置（默认 cache）
+vco debug-ask '这个表单要填什么？' --llm-base https://api.openai.com/v1 \
+                                  --llm-key-env OPENAI_API_KEY --llm-model gpt-4o
+                                  # 在同一个 debug profile 上做一次性视觉问答：cookie 与 `vco debug` 一致，
+                                  # 可先用 --target 跳到一个 URL，再截图、问模型、JSON 输出答案
+vco watch                          # 本地事件流服务器，默认 :8766；面板从这里读 events.jsonl
+                                  # 和每步截图，把 webclick / webrun / watch 自己的 run 历史
+                                  # 渲染成时间线；默认从 ./cache 读
 ```
 
 桌面（OCR 优先，真实鼠标只在 click 时动）：
@@ -45,8 +55,17 @@ vco debug http://127.0.0.1:3080/
 ```bash
 vco shot                          # 截图；--region x,y,w,h 截局部；--display 2 选副屏（默认主屏）
                                   # 输出坐标始终是全局逻辑坐标，click 直接可用
+vco gridshot --rows 10 --cols 10  # 类似 shot，但在图上叠一层 N×N 编号网格，并保存 mapping.json，
+                                  # 之后可以离线把 cell 换算成屏幕坐标（与 find/click 给模型看的网格一致）
+vco extendgrid --clean ./.screenshot/gridshot-clean.png --cell 23 \
+               --from-rows 10 --from-cols 10 --rows 4 --cols 4
+                                  # 放大 gridshot 中的某一格，重新画更细的 4×4 网格；可以层层放大，
+                                  # 直到模型有足够紧的目标框，全程不调视觉 API
 vco find --target "CODEX"         # 定位（dry-run）：OCR 优先，命中点画半透明红圈
 vco click --at 1164,92            # 真实点击坐标；click --target "..." 则先定位再点
+                                  # --no-click-trace 跳过点击后那张带标记的截图
+                                  # --no-verify 跳过点击前的「目标区域是否稳定」检查；
+                                  # --verify-threshold 0.8 设像素相似度门槛（默认 0.8）
 vco type --target "用户名" --text alice
                                   # 定位输入框并打字；中文等用 --paste 走剪贴板
 vco type --target "密码" --text-env PASSWORD
