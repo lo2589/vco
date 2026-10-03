@@ -115,7 +115,7 @@ There are three other approaches people often ask about. They are good at differ
 | What it is | Pure-vision UI parser from a screenshot | End-to-end GUI-Agent model + runtime | General multimodal model (vision + audio + text) | Composable toolchain: OCR, DOM/aria, optional vision model, real mouse/keyboard |
 | Model lock-in | Owns a vision model | Tied to UI-TARS weights | Tied to Qwen family | **Model-agnostic** — any LLM that can call shell/JSON |
 | Perception | Screenshot only | Screenshot only | Screenshot / uploaded image | **OCR-first for text**, DOM/aria for web, vision only as fallback |
-| Control | Perception only | Action plans executed by framework | Needs external control code | **Built-in control**: `click`, `type`, `webclick`, `webrun` |
+| Control | Perception only | Action plans executed by framework | Needs external control code | **Built-in control**: `click`, `type`, `key`, `scroll`, `run`, `webclick`, `webrun` |
 | Cost / latency | Vision model per screenshot | Large model per step | Large multimodal call per step | **Zero model calls** for unique text targets; local OCR + local coordinate math |
 | Best for | Complex desktop apps with no API | Zero-code desktop automation | Multimodal tasks inside the Qwen ecosystem | Web automation, text-heavy desktop UIs, agent toolchains, local/offline setups |
 
@@ -204,7 +204,7 @@ The target gets ringed in orange, waits 0.9 s, then the click lands — all visi
 Zero-dependency stdio MCP server: `python3 -m vco.mcp_server` (plugin config in `plugins/vco/.mcp.json`). Exposes 8 tools:
 
 - `web_snapshot` / `web_screenshot` / `web_click` / `web_run`: the headless web channel (aria-tree perception, screenshots, DOM clicks, agent loop) — no model required, or a text model for the loop;
-- `screen_probe` / `screen_run`: the desktop channel (GLM/MiniMax vision models + grid zoom); requires `VCO_GLM_SETTINGS` / `VCO_MINIMAX_SETTINGS` env vars pointing at settings files;
+- `screen_probe` / `screen_run`: the desktop channel (GLM/MiniMax vision models + grid zoom); requires `VCO_GLM_SETTINGS` / `VCO_MINIMAX_SETTINGS` env vars pointing at settings files. `screen_run` is the same loop as `vco run`: full action set, step history, and the stuck stop when `execute=true`;
 - `cache_status` / `cache_clear`: cache management.
 
 Any MCP-capable agent (Codex, Claude Code, Kimi, ...) can call these directly.
@@ -448,9 +448,9 @@ Also supports manual input (`--provider manual`), JSONL replay, and the OpenAI p
 
 ## Capability boundaries
 
-Good at: clicking clear buttons, cards, and icons; coarse selection inside bounded regions; simple straight-line drags; low-cost local Computer-Use proofs of concept; acting as a "visual probe" for agents (screenshot, locate, verify).
+Good at: clicking clear buttons, cards, and icons; coarse selection inside bounded regions; simple straight-line drags; wheel scrolling, typing into the focused field, and keyboard shortcuts (`cmd+space`, `cmd+l`, …), which are often more reliable than clicking; low-cost local Computer-Use proofs of concept; acting as a "visual probe" for agents (screenshot, locate, verify).
 
-Not yet reliable or unsupported: text-dense UIs, very small or visually similar controls; fast-disappearing menus, heavy animation, low-latency reactions; scrolling, multi-point curves, complex drawing; precise dragging; autonomously understanding long tasks (small models may misfire `done` — always set max steps); safely executing payments, deletions, message sending, and other high-risk operations.
+Not yet reliable or unsupported: text-dense UIs, very small or visually similar controls; fast-disappearing menus, heavy animation, low-latency reactions; multi-point curves, complex drawing; hover-only UI (there is no hover action); precise dragging; autonomously understanding long tasks (small models may misfire `done` — always set max steps; a local vision model takes on the order of a minute per step); safely executing payments, deletions, message sending, and other high-risk operations.
 
 ## Safety design
 
@@ -458,16 +458,17 @@ Not yet reliable or unsupported: text-dense UIs, very small or visually similar 
 - Ambiguous OCR targets refuse to click and fall back to model judgment.
 - All actions are confined to the user-specified region.
 - Model JSON is validated against a strict schema; illegal offsets are never silently corrected.
-- `--max-steps` prevents infinite loops.
-- The action set contains no shell, file operations, or arbitrary tool calls; `type`/`fill` use the keyboard only to enter user-supplied text into located input fields.
+- `--max-steps` prevents infinite loops; with `--execute`, `run` also stops as `stuck` after 3 actions in a row leave the screen unchanged.
+- The action set contains no shell, file operations, or arbitrary tool calls; `type`/`fill` use the keyboard only to enter user-supplied text into located input fields. In `run`, the model's `type` and `key` actions go to whatever has focus, and a chord such as `cmd+q` acts on the frontmost app, not just the region: review dry-run output before `--execute`.
+- A key name the executor does not know is reported back to the model as a failed step; it is never guessed.
 - Every step saves the clean image, grid image, zoom images, model action, and local resolution.
-- Ollama defaults to `127.0.0.1:11434`; images never leave the machine with that provider.
+- Ollama defaults to `127.0.0.1:11434`; images never leave the machine with that provider. Loopback requests (Ollama, a local OCR service) bypass `HTTP_PROXY`, so a machine-wide proxy cannot intercept them.
 - Real execution uses pyautogui with the top-left-corner fail-safe enabled: slam the mouse into the main screen's top-left corner to emergency-stop.
 
 ## Artifacts
 
 - `shot`/`find`/`click`/`ask` artifacts go to `.screenshot/` under the current directory (already in `.gitignore`).
-- `run` writes full trajectories to `cache/runs/<timestamp>/`: task, mapping table, per-step screenshots, zoom images, actions, and resolved coordinates.
+- `run` writes full trajectories to `cache/runs/<timestamp>/`: task, mapping table, per-step screenshots, zoom images, actions, and resolved coordinates. Each `step-NNN-action.json` also carries `history`: the actions taken so far and whether each one changed the screen, exactly as the model saw it.
 
 These files may contain private screen content; both directories can be deleted wholesale:
 
@@ -481,12 +482,13 @@ rm -rf ./cache/ ./.screenshot/
 python3 -m unittest discover -v
 ```
 
-Covers grid boundaries, forward/reverse coordinate mapping, strict JSON schema, Ollama/OpenAI/MiniMax transports, edge cropping, two-level zoom, and loop artifacts; plus the web agent's decision parsing (refusing precisely matters as much as accepting — a rejected decision is handed back for the model to correct) and the report builder behind `webdebug`, including one test pinning down the rule that a cause the model merely asserted, with nothing recorded behind it, never reaches the findings.
+Covers grid boundaries, forward/reverse coordinate mapping, strict JSON schema, Ollama/OpenAI/MiniMax transports, edge cropping, two-level zoom, and loop artifacts; the extended action set (key-chord normalization, double/right click, scroll, type, wait), step history with screen-change detection, the stuck stop, and loopback requests bypassing an environment proxy; plus the web agent's decision parsing (refusing precisely matters as much as accepting — a rejected decision is handed back for the model to correct) and the report builder behind `webdebug`, including one test pinning down the rule that a cause the model merely asserted, with nothing recorded behind it, never reaches the findings.
 
 ## Next steps
 
-1. Image diffing before/after actions for success detection, reducing "clicked but nothing happened" misjudgments (today's stopgap is a manual/model `shot` comparison after `click`).
-2. Forbidden-region policies and pre-execution confirmation for high-risk areas.
-3. Separate local zoom for drag start and end points.
-4. An automated grounding evaluation set with varied positions, sizes, and themes.
-5. A window picker for live runs to avoid hand-writing `--region`.
+1. Success detection beyond "did the screen change": `run` now tells the model whether each action changed the screen and stops when stuck, but a change is not proof the intended thing happened. Standalone `click` still relies on a follow-up `shot`.
+2. A real `--execute` run on an end-to-end desktop task, and a desktop evaluation set to measure the loop's success rate.
+3. Forbidden-region policies and pre-execution confirmation for high-risk areas and key chords.
+4. Separate local zoom for drag start and end points; a hover action.
+5. An automated grounding evaluation set with varied positions, sizes, and themes.
+6. A window picker for live runs to avoid hand-writing `--region`.
