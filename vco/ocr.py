@@ -22,6 +22,7 @@ from PIL import Image
 from pydantic import Field, model_validator
 
 from .models import StrictModel
+from .net import open_url
 
 
 class OCRRequest(StrictModel):
@@ -329,7 +330,7 @@ class HTTPOCRBackend:
         self.endpoint = endpoint
         self.api_key = api_key
         self.timeout = timeout
-        self._opener = opener or urllib.request.urlopen
+        self._opener = opener or open_url
 
     @property
     def available(self) -> bool:

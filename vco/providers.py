@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from typing import Protocol
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import Request
 
 from PIL import Image
 from pydantic import ValidationError
@@ -27,6 +27,7 @@ from .models import (
     structured_click_json_schema,
 )
 from .geometry import GridMapper
+from .net import open_url
 
 
 SYSTEM_PROMPT = """You control a computer through a numbered grid.
@@ -383,7 +384,7 @@ class MiniMaxProvider:
         service_tier: str = "priority",
         image_detail: str = "default",
         image_mode: str = "both",
-        opener=urlopen,
+        opener=open_url,
     ):
         if service_tier not in {"standard", "priority"}:
             raise ValueError("service_tier must be 'standard' or 'priority'")
@@ -822,7 +823,7 @@ class GLMProvider:
         timeout: float = 120.0,
         image_mode: str = "both",
         thinking: str = "disabled",
-        opener=urlopen,
+        opener=open_url,
     ):
         if image_mode not in {"both", "clean", "grid"}:
             raise ValueError("image_mode must be 'both', 'clean', or 'grid'")
@@ -1152,7 +1153,7 @@ class OllamaProvider:
         base_url: str = "http://127.0.0.1:11434",
         timeout: float = 180.0,
         image_mode: str = "both",
-        opener=urlopen,
+        opener=open_url,
     ):
         if image_mode not in {"both", "grid"}:
             raise ValueError("image_mode must be 'both' or 'grid'")

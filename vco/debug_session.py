@@ -36,6 +36,7 @@ from urllib.parse import unquote, urlsplit
 
 from . import monitor
 from .dommarks import _SNAPSHOT_JS as MARKS_JS
+from .net import open_url
 
 # `VCO_DEBUG_TRACE=1` prints every panel→browser message to stderr; any other
 # value is treated as a log file path (keeps the panel's own stdout clean while
@@ -334,7 +335,7 @@ def _call_chat_text(
         },
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=120) as resp:
+    with open_url(req, timeout=120) as resp:
         raw = resp.read().decode("utf-8")
     data = json.loads(raw)
     try:
