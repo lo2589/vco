@@ -226,8 +226,17 @@ class AdaptiveZoomProvider:
                 levels.append(
                     AdaptiveZoomLevel(level, view_box, dumped, None, metadata)
                 )
+            elif level == 1:
+                # Level 1 is the uncropped frame, so any grid points in
+                # scroll/double_click/... are already in full-frame terms.
+                levels.append(
+                    AdaptiveZoomLevel(level, view_box, dumped, None, metadata)
+                )
+                final = decision
             else:
-                raise RuntimeError("adaptive zoom currently supports click or done")
+                raise RuntimeError(
+                    f"adaptive zoom cannot map {decision.type!r} out of a zoomed crop"
+                )
 
             self.last_trace = AdaptiveZoomTrace(
                 tuple(levels), final.model_dump(mode="json")

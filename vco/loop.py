@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
 
+from PIL import Image
+
+from .diff import pixel_similarity
 from .events import emit
 from .executor import ActionExecutor, resolve_action
 from .geometry import GridMapper
@@ -25,12 +28,55 @@ class LoopResult:
 
 
 def _action_summary(action) -> str:
-    """One-line human-readable action for the monitor timeline."""
-    if action.type == "click":
-        return f"click cell={action.target.cell}"
+    """One-line human-readable action for the monitor timeline and history."""
+    if action.type in {"click", "double_click", "right_click"}:
+        return f"{action.type} cell={action.target.cell}"
     if action.type == "drag":
         return f"drag cell={action.start.cell} -> cell={action.end.cell}"
+    if action.type == "scroll":
+        return f"scroll {action.amount:+d} at cell={action.target.cell}"
+    if action.type == "type":
+        text = action.text if len(action.text) <= 60 else action.text[:57] + "..."
+        return f"type {json.dumps(text, ensure_ascii=False)}"
+    if action.type == "key":
+        return f"key {action.keys}"
+    if action.type == "wait":
+        return f"wait {action.seconds:g}s"
     return f"done: {action.reason}"
+
+
+# Above this similarity two frames are "the same screen": cursor blink and
+# clock ticks stay under it, a menu opening or text appearing does not.
+UNCHANGED_SIMILARITY = 0.998
+HISTORY_LIMIT = 12
+
+
+def _screen_changed(before: Image.Image, after: Image.Image) -> bool:
+    size = (min(before.width, 480), min(before.height, 300))
+    return (
+        pixel_similarity(before.resize(size), after.resize(size))
+        < UNCHANGED_SIMILARITY
+    )
+
+
+def _task_with_history(task: str, history: list[str]) -> str:
+    """Fold earlier steps into the task text.
+
+    Every provider and wrapper (OCR hints, zoom) already threads ``task``
+    through untouched, so this reaches all of them without a new parameter.
+    Without it each step is the first step: the model re-clicks a button that
+    did nothing, or never says done because it cannot see it already acted.
+    """
+
+    if not history:
+        return task
+    return (
+        f"{task}\n\nActions already taken, oldest first (the screenshot shows "
+        "the state after the last one):\n"
+        + "\n".join(history[-HISTORY_LIMIT:])
+        + "\nDo not repeat an action whose screen did not change; try a "
+        "different action instead. Return done once the task is visibly complete."
+    )
 
 
 class ComputerUseLoop:
@@ -64,8 +110,17 @@ class ComputerUseLoop:
         )
         (run_dir / "task.txt").write_text(task + "\n", encoding="utf-8")
 
+        history: list[str] = []
+        previous = None  # (frame image, history index) of the last executed action
         for step in range(1, max_steps + 1):
             frame = self.capture.capture(self.region)
+            if previous is not None:
+                before, index = previous
+                changed = _screen_changed(before, frame.image)
+                history[index] += (
+                    " -> screen changed" if changed else " -> screen did NOT change"
+                )
+                previous = None
             gridded = render_numbered_grid(frame.image, self.grid)
             clean_path = run_dir / f"step-{step:03d}-clean.png"
             grid_path = run_dir / f"step-{step:03d}-grid.png"
@@ -80,7 +135,7 @@ class ComputerUseLoop:
             )
 
             action = self.provider.choose_action(
-                task=task,
+                task=_task_with_history(task, history),
                 clean=frame.image,
                 gridded=gridded,
                 grid=self.grid,
@@ -113,6 +168,7 @@ class ComputerUseLoop:
                         run_dir / f"step-{step:03d}-zoom-{level:02d}-grid.png"
                     )
             record = {
+                "history": list(history),
                 "model_action": action.model_dump(mode="json"),
                 "provider_metadata": getattr(self.provider, "last_metadata", None),
                 "zoom_trace": zoom_trace,
@@ -120,11 +176,9 @@ class ComputerUseLoop:
                     None
                     if resolved is None
                     else {
-                        "type": resolved.type,
-                        "start": resolved.start,
-                        "end": resolved.end,
-                        "duration": resolved.duration,
-                        "button": resolved.button,
+                        key: value
+                        for key, value in asdict(resolved).items()
+                        if value not in (None, (), 0, 0.0) or key == "type"
                     }
                 ),
             }
@@ -149,6 +203,8 @@ class ComputerUseLoop:
 
             assert resolved is not None
             self.executor.execute(resolved)
+            history.append(f"{step}. {_action_summary(action)}")
+            previous = (frame.image, len(history) - 1)
             if self.settle_seconds:
                 time.sleep(self.settle_seconds)
 

@@ -19,6 +19,7 @@ from .executor import (
     DryRunExecutor,
     PyAutoGuiExecutor,
     ResolvedAction,
+    input_text as _input_text,
     resolve_action,
 )
 from .geometry import GridMapper
@@ -975,31 +976,6 @@ def _mark_target(image: Image.Image, point: tuple[int, int]) -> Image.Image:
     )
     draw.ellipse((x - 2, y - 2, x + 2, y + 2), fill=(255, 0, 0, 255))
     return Image.alpha_composite(marked, overlay).convert("RGB")
-
-
-def _input_text(text: str, *, paste: bool = False, press_enter: int = 0) -> None:
-    """Type or paste ``text`` at the current keyboard focus."""
-
-    import pyautogui
-
-    if paste:
-        import pyperclip
-
-        pyperclip.copy(text)
-        if sys.platform == "darwin":
-            pyautogui.keyDown("command")
-            pyautogui.keyDown("v")
-            pyautogui.keyUp("v")
-            pyautogui.keyUp("command")
-        else:
-            pyautogui.keyDown("ctrl")
-            pyautogui.keyDown("v")
-            pyautogui.keyUp("v")
-            pyautogui.keyUp("ctrl")
-    else:
-        pyautogui.typewrite(text, interval=0.01)
-    for _ in range(press_enter):
-        pyautogui.press("return")
 
 
 def _resolve_text_target(args, target_text: str, *, prefix: str):

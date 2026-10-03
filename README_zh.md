@@ -354,10 +354,20 @@ API key 只从 settings JSON 读取，不会复制进仓库或运行结果。
 {"type": "click", "target": {"cell": 11, "offset_x": 0.5, "offset_y": 0.5}}
 {"type": "drag", "start": {"cell": 6, "offset_x": 0.2, "offset_y": 0.5},
  "end": {"cell": 10, "offset_x": 0.8, "offset_y": 0.5}}
+{"type": "double_click", "target": {"cell": 11, "offset_x": 0.5, "offset_y": 0.5}}
+{"type": "right_click", "target": {"cell": 11, "offset_x": 0.5, "offset_y": 0.5}}
+{"type": "scroll", "target": {"cell": 45, "offset_x": 0.5, "offset_y": 0.5}, "amount": 5}
+{"type": "type", "text": "备忘录"}
+{"type": "key", "keys": "cmd+space"}
+{"type": "wait", "seconds": 1.5}
 {"type": "done", "reason": "已看到保存成功状态"}
 ```
 
 编号从 1 开始，按行优先。`offset_x`/`offset_y` 合法范围 `[0,1]`。协议禁止额外字段和原始屏幕坐标。
+
+`scroll.amount` 是滚轮格数，正数向下。`type` 打进当前键盘焦点（非 ASCII 走剪贴板粘贴）。`key` 是单键或组合键，前面各段必须是修饰键（`cmd`/`ctrl`/`option`/`alt`/`shift`/`fn`）；`cmd`、`return`、`esc` 等会规范成 pyautogui 的键名。
+
+`run` 每一步的提示里都带着之前做过的动作，以及每个动作之后屏幕变没变（`-> screen did NOT change`）。模型据此不再重复点一个没反应的地方，也能判断该不该 done。同一份列表也以 `history` 字段存进每个 `step-NNN-action.json`。
 
 ## OCR 接口
 

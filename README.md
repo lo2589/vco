@@ -381,10 +381,20 @@ API keys are read only from settings JSON files and are never copied into the re
 {"type": "click", "target": {"cell": 11, "offset_x": 0.5, "offset_y": 0.5}}
 {"type": "drag", "start": {"cell": 6, "offset_x": 0.2, "offset_y": 0.5},
  "end": {"cell": 10, "offset_x": 0.8, "offset_y": 0.5}}
+{"type": "double_click", "target": {"cell": 11, "offset_x": 0.5, "offset_y": 0.5}}
+{"type": "right_click", "target": {"cell": 11, "offset_x": 0.5, "offset_y": 0.5}}
+{"type": "scroll", "target": {"cell": 45, "offset_x": 0.5, "offset_y": 0.5}, "amount": 5}
+{"type": "type", "text": "备忘录"}
+{"type": "key", "keys": "cmd+space"}
+{"type": "wait", "seconds": 1.5}
 {"type": "done", "reason": "已看到保存成功状态"}
 ```
 
 Cells are one-based, row-major. `offset_x`/`offset_y` must be in `[0,1]`. Extra fields and raw screen coordinates are rejected by the schema.
+
+`scroll.amount` is wheel notches, positive = down. `type` goes to whatever has keyboard focus (non-ASCII is pasted via the clipboard). `key` takes one key or a chord whose leading parts are modifiers (`cmd`/`ctrl`/`option`/`alt`/`shift`/`fn`); `cmd`, `return`, `esc`, … are normalized to pyautogui names.
+
+In `run`, every step's prompt carries the actions already taken and whether each one changed the screen (`-> screen did NOT change`), so the model stops repeating a dead click and can tell when it is done. The same list is saved as `history` in each `step-NNN-action.json`.
 
 ## OCR interface
 

@@ -21,6 +21,7 @@ from .models import (
     Region,
     parse_action,
     parse_center_delta,
+    points_in_action,
     structured_action_json_schema,
     structured_center_delta_schema,
     structured_click_json_schema,
@@ -35,6 +36,27 @@ user's task. Never return raw screen pixel coordinates. Cell numbers are one-bas
 and row-major. offset_x and offset_y must be in [0,1], measured from the selected
 cell's top-left to bottom-right. Use type=done only when the task is visibly done.
 Return only the JSON object matching the supplied schema."""
+
+# Semantics of the non-pointer actions, shared by every provider. Providers
+# with a strict schema get the shapes from the schema; the free-text ones
+# (MiniMax, GLM) also need EXTRA_ACTION_SHAPES.
+ACTION_GUIDE = """Beyond click and drag you can: double_click or right_click a grid
+point; scroll with the pointer over a grid point (amount is wheel notches,
+positive scrolls down, negative up); type text into whatever already has keyboard
+focus (click the field first); press a key or chord with key, e.g. "enter",
+"escape", "tab", "cmd+space", "cmd+shift+t"; wait a few seconds for the screen
+to settle. Prefer keyboard shortcuts when they are the reliable way to do it."""
+
+SYSTEM_PROMPT += "\n" + ACTION_GUIDE
+
+EXTRA_ACTION_SHAPES = (
+    '{"action":{"type":"double_click","target":{"cell":N,"offset_x":X,"offset_y":Y}}}, '
+    '{"action":{"type":"right_click","target":{"cell":N,"offset_x":X,"offset_y":Y}}}, '
+    '{"action":{"type":"scroll","target":{"cell":N,"offset_x":X,"offset_y":Y},"amount":5}}, '
+    '{"action":{"type":"type","text":"..."}}, '
+    '{"action":{"type":"key","keys":"cmd+space"}}, '
+    '{"action":{"type":"wait","seconds":1.5}}'
+)
 
 
 class VisionProvider(Protocol):
@@ -533,6 +555,8 @@ class MiniMaxProvider:
                 allowed += (
                     ' If the task is visibly complete, you may instead return '
                     '{"action":{"type":"done","reason":"visible completion reason"}}.'
+                    f" When the next step is not a single click, return one of: "
+                    f"{EXTRA_ACTION_SHAPES}. {ACTION_GUIDE}"
                 )
         elif force_click:
             allowed = f"Return {click_format}."
@@ -541,7 +565,9 @@ class MiniMaxProvider:
                 f"Return one of: {click_format}, "
                 '{"action":{"type":"drag","start":{"cell":N,"offset_x":X,'
                 '"offset_y":Y},"end":{"cell":N,"offset_x":X,"offset_y":Y}}}, '
-                'or {"action":{"type":"done","reason":"visible completion reason"}}.'
+                f"{EXTRA_ACTION_SHAPES}, "
+                'or {"action":{"type":"done","reason":"visible completion reason"}}. '
+                f"{ACTION_GUIDE}"
             )
         if self.image_mode == "both":
             image_instructions = (
@@ -659,15 +685,7 @@ class MiniMaxProvider:
                 )
                 if force_click and decision.type != "click":
                     raise ValueError("this localization stage requires click or zoom")
-                for point in (
-                    [decision.target]
-                    if decision.type == "click"
-                    else (
-                        [decision.start, decision.end]
-                        if decision.type == "drag"
-                        else []
-                    )
-                ):
+                for point in points_in_action(decision):
                     if point.cell > grid.cell_count:
                         raise ValueError(f"cell must be <= {grid.cell_count}")
             self.last_metadata = {
@@ -916,13 +934,16 @@ class GLMProvider:
                 allowed += (
                     ' If complete, return {"action":{"type":"done",'
                     '"reason":"visible completion reason"}}.'
+                    f" When the next step is not a single click, return one of: "
+                    f"{EXTRA_ACTION_SHAPES}. {ACTION_GUIDE}"
                 )
         elif force_click:
             allowed = f"You must return {click_json}."
         else:
             allowed = (
                 f"Return {click_json}, a straight drag action using start/end grid "
-                "points, or a done action."
+                f"points, one of {EXTRA_ACTION_SHAPES}, or a done action. "
+                f"{ACTION_GUIDE}"
             )
         if self.image_mode == "both":
             image_help = (
@@ -1013,14 +1034,10 @@ class GLMProvider:
                 )
                 if force_click and decision.type != "click":
                     raise ValueError("this localization stage requires click or zoom")
-                points = (
-                    [decision.target]
-                    if decision.type == "click"
-                    else [decision.start, decision.end]
-                    if decision.type == "drag"
-                    else []
-                )
-                if any(point.cell > grid.cell_count for point in points):
+                if any(
+                    point.cell > grid.cell_count
+                    for point in points_in_action(decision)
+                ):
                     raise ValueError(f"cell must be <= {grid.cell_count}")
             self.last_metadata = {
                 "model": body.get("model", self.model),
@@ -1386,7 +1403,10 @@ class ManualProvider:
     """Human-in-the-loop provider useful for validating the local pipeline."""
 
     def choose_action(self, **kwargs) -> Action:
-        print("Enter one action JSON (click, drag, or done):")
+        print(
+            "Enter one action JSON (click, double_click, right_click, drag, "
+            "scroll, type, key, wait, or done):"
+        )
         return parse_action(input("> "))
 
 

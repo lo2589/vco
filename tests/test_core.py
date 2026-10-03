@@ -1249,5 +1249,135 @@ class LoopTests(unittest.TestCase):
             self.assertEqual(action_record["resolved_local_action"]["start"], [220, 50])
 
 
+class ExtendedActionTests(unittest.TestCase):
+    def setUp(self):
+        self.mapper = GridMapper(
+            Region(x=10, y=20, width=240, height=120), GridSpec(rows=2, cols=4)
+        )
+
+    def test_key_combo_is_normalized_to_pyautogui_names(self):
+        action = parse_action({"type": "key", "keys": "Cmd+Shift+Return"})
+        self.assertEqual(action.keys, "command+shift+enter")
+        resolved = resolve_action(action, self.mapper)
+        self.assertEqual(resolved.keys, ("command", "shift", "enter"))
+
+    def test_key_combo_rejects_two_plain_keys(self):
+        with self.assertRaises(ValidationError):
+            parse_action({"type": "key", "keys": "a+b"})
+        with self.assertRaises(ValidationError):
+            parse_action({"type": "key", "keys": "cmd+"})
+
+    def test_pointer_variants_resolve_to_click_with_button_and_count(self):
+        target = {"cell": 4, "offset_x": 0.5, "offset_y": 0.5}
+        double = resolve_action(
+            parse_action({"type": "double_click", "target": target}), self.mapper
+        )
+        right = resolve_action(
+            parse_action({"type": "right_click", "target": target}), self.mapper
+        )
+        self.assertEqual((double.type, double.clicks, double.start), ("click", 2, (220, 50)))
+        self.assertEqual((right.type, right.button), ("click", "right"))
+
+    def test_scroll_type_wait_resolve(self):
+        scroll = resolve_action(
+            parse_action(
+                {
+                    "type": "scroll",
+                    "target": {"cell": 1, "offset_x": 0, "offset_y": 0},
+                    "amount": -3,
+                }
+            ),
+            self.mapper,
+        )
+        self.assertEqual((scroll.start, scroll.amount), ((10, 20), -3))
+        typed = resolve_action(parse_action({"type": "type", "text": "你好"}), self.mapper)
+        self.assertEqual(typed.text, "你好")
+        wait = resolve_action(parse_action({"type": "wait", "seconds": 1.5}), self.mapper)
+        self.assertEqual(wait.seconds, 1.5)
+        with self.assertRaises(ValidationError):
+            parse_action({"type": "wait", "seconds": 60})
+
+    def test_structured_schema_offers_every_action_type(self):
+        schema = structured_action_json_schema()
+        types = {
+            definition["properties"]["type"]["const"]
+            for definition in schema["$defs"].values()
+            if "type" in definition.get("properties", {})
+        }
+        self.assertEqual(
+            types,
+            {"click", "double_click", "right_click", "drag", "scroll",
+             "type", "key", "wait", "done"},
+        )
+
+
+class ChangingCapture:
+    """White screen until the first action lands, then a black one."""
+
+    def __init__(self, executor):
+        self.executor = executor
+
+    def capture(self, region):
+        color = "black" if self.executor.actions else "white"
+        return CaptureFrame(Image.new("RGB", (240, 120), color), region)
+
+
+class RecordingProvider:
+    def __init__(self, actions):
+        self.actions = iter(parse_action(item) for item in actions)
+        self.tasks = []
+
+    def choose_action(self, **kwargs):
+        self.tasks.append(kwargs["task"])
+        return next(self.actions)
+
+
+class LoopHistoryTests(unittest.TestCase):
+    def run_loop(self, capture_factory, actions):
+        executor = DryRunExecutor()
+        provider = RecordingProvider(actions)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            loop = ComputerUseLoop(
+                capture=capture_factory(executor),
+                provider=provider,
+                executor=executor,
+                region=Region(x=0, y=0, width=240, height=120),
+                grid=GridSpec(rows=2, cols=4),
+                artifact_root=Path(temp_dir),
+                settle_seconds=0,
+            )
+            result = loop.run("open the thing", max_steps=5)
+            record = json.loads(
+                (result.run_dir / f"step-{result.steps:03d}-action.json").read_text()
+            )
+        return result, provider, executor, record
+
+    def test_model_sees_earlier_actions_and_whether_the_screen_changed(self):
+        result, provider, executor, record = self.run_loop(
+            ChangingCapture,
+            [
+                {"type": "key", "keys": "cmd+space"},
+                {"type": "type", "text": "Notes"},
+                {"type": "done", "reason": "opened"},
+            ],
+        )
+        self.assertEqual(result.status, "done")
+        self.assertEqual([a.type for a in executor.actions], ["key", "type"])
+        self.assertEqual(provider.tasks[0], "open the thing")
+        self.assertIn("1. key command+space -> screen changed", provider.tasks[1])
+        self.assertIn('2. type "Notes" -> screen did NOT change', provider.tasks[2])
+        self.assertEqual(len(record["history"]), 2)
+
+    def test_unchanged_screen_is_reported(self):
+        _, provider, _, _ = self.run_loop(
+            lambda executor: FakeCapture(),
+            [
+                {"type": "right_click", "target": {"cell": 2, "offset_x": 0.5, "offset_y": 0.5}},
+                {"type": "done", "reason": "gave up"},
+            ],
+        )
+        self.assertIn("1. right_click cell=2 -> screen did NOT change", provider.tasks[1])
+
+
 if __name__ == "__main__":
     unittest.main()

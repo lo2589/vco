@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated, Literal, Union
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator
 
 
 class StrictModel(BaseModel):
@@ -61,13 +61,101 @@ class DragAction(StrictModel):
     end: GridPoint
 
 
+class DoubleClickAction(StrictModel):
+    type: Literal["double_click"]
+    target: GridPoint
+
+
+class RightClickAction(StrictModel):
+    type: Literal["right_click"]
+    target: GridPoint
+
+
+class ScrollAction(StrictModel):
+    """Scroll with the pointer over ``target``; positive ``amount`` scrolls down."""
+
+    type: Literal["scroll"]
+    target: GridPoint
+    amount: int = Field(ge=-30, le=30)
+
+
+class TypeTextAction(StrictModel):
+    """Type into whatever currently has keyboard focus."""
+
+    type: Literal["type"]
+    text: str = Field(min_length=1, max_length=2000)
+
+
+MODIFIER_KEYS = {"command", "ctrl", "option", "alt", "shift", "fn", "win"}
+_KEY_ALIASES = {
+    "cmd": "command",
+    "control": "ctrl",
+    "opt": "option",
+    "return": "enter",
+    "esc": "escape",
+    "del": "delete",
+    "pgup": "pageup",
+    "pgdn": "pagedown",
+    "arrowup": "up",
+    "arrowdown": "down",
+    "arrowleft": "left",
+    "arrowright": "right",
+}
+
+
+def normalize_keys(combo: str) -> tuple[str, ...]:
+    """Split ``"cmd+shift+t"`` into pyautogui key names, rejecting junk.
+
+    Every part but the last must be a modifier, so "a+b" (two plain keys) is
+    refused instead of being pressed as a chord nobody meant.
+    """
+
+    parts = [part.strip().lower() for part in combo.split("+")]
+    if not parts or any(not part for part in parts):
+        raise ValueError(f"malformed key combo: {combo!r}")
+    parts = [_KEY_ALIASES.get(part, part) for part in parts]
+    for part in parts[:-1]:
+        if part not in MODIFIER_KEYS:
+            raise ValueError(f"{part!r} is not a modifier in {combo!r}")
+    if len(set(parts)) != len(parts):
+        raise ValueError(f"repeated key in {combo!r}")
+    return tuple(parts)
+
+
+class KeyAction(StrictModel):
+    """Press one key or a chord, e.g. ``enter``, ``cmd+space``, ``cmd+shift+t``."""
+
+    type: Literal["key"]
+    keys: str = Field(min_length=1, max_length=60)
+
+    @field_validator("keys")
+    @classmethod
+    def _valid_combo(cls, value: str) -> str:
+        return "+".join(normalize_keys(value))
+
+
+class WaitAction(StrictModel):
+    type: Literal["wait"]
+    seconds: float = Field(ge=0.1, le=10.0)
+
+
 class DoneAction(StrictModel):
     type: Literal["done"]
     reason: str = Field(min_length=1, max_length=500)
 
 
 Action = Annotated[
-    Union[ClickAction, DragAction, DoneAction],
+    Union[
+        ClickAction,
+        DoubleClickAction,
+        RightClickAction,
+        DragAction,
+        ScrollAction,
+        TypeTextAction,
+        KeyAction,
+        WaitAction,
+        DoneAction,
+    ],
     Field(discriminator="type"),
 ]
 ACTION_ADAPTER = TypeAdapter(Action)
@@ -174,7 +262,7 @@ def parse_center_delta(value: object) -> CenterDeltaClick:
 
 
 def points_in_action(action: Action):
-    if action.type == "click":
+    if action.type in {"click", "double_click", "right_click", "scroll"}:
         return (action.target,)
     if action.type == "drag":
         return (action.start, action.end)
