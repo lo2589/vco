@@ -98,6 +98,16 @@ def build_providers(settings_dir: Path, selected: set[str]):
             image_mode="both",
             thinking="disabled",
         )
+    if "ling" in selected:
+        settings = read_settings(settings_dir / "provider_settings.ling.json")
+        providers["ling"] = GLMProvider(
+            settings.get("model", "Ling-3.0-flash-VL"),
+            api_key=settings["api_key"],
+            base_url=settings.get("base_url", "https://api.ant-ling.com/v1"),
+            timeout=150,
+            image_mode="both",
+            thinking="disabled",
+        )
     if "minimax" in selected:
         settings = read_settings(settings_dir / "provider_settings.minimax.json")
         providers["minimax"] = MiniMaxProvider(
@@ -253,7 +263,7 @@ def main() -> None:
     parser.add_argument(
         "--providers",
         default="deepseek,glm,minimax",
-        help="comma-separated: deepseek,glm,minimax,minicpm,gemma4",
+        help="comma-separated: deepseek,glm,minimax,ling,minicpm,gemma4",
     )
     parser.add_argument("--limit-cases", type=int)
     parser.add_argument("--limit-configs", type=int)
