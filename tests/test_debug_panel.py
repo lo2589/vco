@@ -228,7 +228,8 @@ class PanelAssetsTest(unittest.TestCase):
         # Right-click is a page gesture, never the panel's context menu.
         self.assertIn("contextmenu", js)
         self.assertIn("btn-clear-picks", html)
-        self.assertIn("annotation", html)
+        # each locked element's card carries its own annotation box (built in JS)
+        self.assertIn('anno.className = "anno"', js)
 
     def test_inject_exposes_the_shared_describe_entry_points(self):
         js = (DEBUG_ASSETS / "inject.js").read_text(encoding="utf-8")
@@ -249,7 +250,9 @@ class PanelAssetsTest(unittest.TestCase):
         self.assertIn("modifiers: modifiersOf(e)", js)
         # the mask must be editable for paste/copy/IME to fire at all
         self.assertIn('id="mask" tabindex="0" contenteditable="true"', html)
-        self.assertIn("typebox", html)
+        # the mask is the only keyboard sink; IME progress is shown beside it
+        self.assertNotIn('id="typebox"', html)
+        self.assertIn('id="type-status"', html)
 
 
 if __name__ == "__main__":

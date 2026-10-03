@@ -18,6 +18,11 @@ from vco.monitor import (
     serve_monitor,
 )
 
+# The server under test is on loopback. A machine-wide HTTP_PROXY would
+# otherwise route these requests through the proxy, which answers 500 for
+# 127.0.0.1 — a failure of the developer's network setup, not of the monitor.
+_LOCAL = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
 
 class EmitTests(unittest.TestCase):
     def test_emit_appends_jsonl_record(self):
@@ -127,7 +132,7 @@ class HTTPServerTests(unittest.TestCase):
         return f"http://127.0.0.1:{self.port}{path}"
 
     def _get(self, path: str):
-        return urllib.request.urlopen(self._url(path), timeout=5)
+        return _LOCAL.open(self._url(path), timeout=5)
 
     def _get_status(self, path: str) -> int:
         try:
@@ -188,7 +193,7 @@ class HTTPServerTests(unittest.TestCase):
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        with urllib.request.urlopen(request, timeout=5) as resp:
+        with _LOCAL.open(request, timeout=5) as resp:
             record = json.loads(resp.read())
         self.assertEqual(record["text"], "看不清")
         annotations = (run_dir / "annotations.jsonl").read_text(encoding="utf-8")
@@ -205,7 +210,7 @@ class HTTPServerTests(unittest.TestCase):
             method="POST",
         )
         with self.assertRaises(urllib.error.HTTPError) as ctx:
-            urllib.request.urlopen(request, timeout=5)
+            _LOCAL.open(request, timeout=5)
         self.assertIn(ctx.exception.code, (400, 403, 404))
 
 
