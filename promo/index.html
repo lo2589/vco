@@ -1,0 +1,793 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>vco — visual computer operate</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; animation:none !important; transition:none !important; }
+  html,body { background:#000; height:100%; overflow:hidden;
+    font-family: ui-sans-serif, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+  :root {
+    --bg:#0b0e14; --panel:#11161f; --line:#232b38;
+    --blue:#4c8dff; --green:#3fb950; --orange:#f0a35e; --red:#ff4d4d;
+    --text:#e6edf3; --dim:#8b949e;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  #stage { position:absolute; left:50%; top:50%; width:1280px; height:720px;
+    transform:translate(-50%,-50%); transform-origin:center;
+    background:radial-gradient(1200px 700px at 50% 38%, #111827 0%, var(--bg) 62%, #07090d 100%);
+    overflow:hidden; color:var(--text); }
+  #dots { position:absolute; inset:0; opacity:.5;
+    background-image:radial-gradient(#1d2635 1px, transparent 1.4px); background-size:26px 26px; }
+  .scene { position:absolute; inset:0; visibility:hidden; opacity:0; }
+  .mono { font-family:var(--mono); }
+  .caption { position:absolute; left:60px; bottom:34px; font-size:15px; color:var(--dim); letter-spacing:.04em; }
+  .caption b { color:var(--text); font-weight:600; }
+
+  /* ---------- S1 problem → answer ---------- */
+  #s1 .fakeapp { position:absolute; left:70px; top:120px; width:560px; height:430px;
+    background:#161c26; border:1px solid var(--line); border-radius:12px; overflow:hidden;
+    box-shadow:0 30px 80px rgba(0,0,0,.5); }
+  #s1 .fakeapp .bar { height:38px; background:#1c2330; display:flex; align-items:center; gap:8px; padding:0 14px; }
+  #s1 .dot { width:12px; height:12px; border-radius:50%; }
+  #s1 .fakebody { padding:26px; }
+  #s1 .sk { background:#242d3b; border-radius:6px; margin-bottom:16px; }
+  #s1 .btn { display:inline-block; padding:9px 22px; border-radius:8px; font-size:14px;
+    font-weight:600; margin-right:12px; }
+  #s1 .cursor2 { position:absolute; width:0; height:0; z-index:5;
+    border-left:11px solid #fff; border-top:16px solid transparent; border-bottom:4px solid transparent;
+    filter:drop-shadow(0 2px 3px rgba(0,0,0,.6)); }
+  #s1 .ghost { position:absolute; width:0; height:0; z-index:4;
+    border-left:11px solid rgba(255,255,255,.55); border-top:16px solid transparent; border-bottom:4px solid transparent; }
+  #s1 .ripple { position:absolute; border:2px solid rgba(255,255,255,.7); border-radius:50%; }
+  #s1 .ripple.green { border-color:rgba(63,185,80,.95); box-shadow:0 0 18px rgba(63,185,80,.5); }
+  #s1 .halo { position:absolute; border-radius:50%; pointer-events:none;
+    border:3px solid var(--orange); box-shadow:0 0 24px 6px rgba(240,163,94,.55); }
+  #s1 .lines { position:absolute; left:700px; top:170px; width:540px; }
+  #s1 .ln { font-size:34px; font-weight:700; margin-bottom:26px; letter-spacing:-.01em; }
+  #s1 .ln.bad { color:var(--red); }
+  #s1 .word { position:absolute; left:696px; top:170px;
+    font-size:150px; font-weight:800; letter-spacing:-.03em; line-height:1; }
+  #s1 .sub { position:absolute; left:700px; top:352px;
+    font-family:var(--mono); font-size:19px; color:var(--dim); letter-spacing:.05em; }
+  #s1 .pill { position:absolute; left:700px; top:425px; width:520px;
+    background:#0a0e14; border:1px solid var(--line); border-radius:12px; padding:16px 22px;
+    font-family:var(--mono); font-size:16px; color:var(--green);
+    box-shadow:0 24px 70px rgba(0,0,0,.5); }
+  .cursor { display:inline-block; width:.58em; height:1.12em; vertical-align:-.18em;
+    background:var(--green); margin-left:2px; }
+  #s1 .cursor { background:var(--dim); }
+
+  /* ---------- shared browser/terminal chrome ---------- */
+  .browser { position:absolute; background:#0f141c; border:1px solid var(--line); border-radius:12px;
+    overflow:hidden; box-shadow:0 24px 70px rgba(0,0,0,.5); }
+  .browser .bar { height:38px; background:#161d29; display:flex; align-items:center; gap:8px; padding:0 14px; }
+  .browser .url { flex:1; margin-left:8px; background:#0b0f16; border:1px solid var(--line);
+    border-radius:6px; padding:4px 12px; font-family:var(--mono); font-size:12px; color:var(--dim); }
+  .term { position:absolute; background:#0a0e14; border:1px solid var(--line); border-radius:12px;
+    padding:20px 22px; font-family:var(--mono); font-size:14px; line-height:1.75;
+    box-shadow:0 24px 70px rgba(0,0,0,.5); white-space:pre-wrap; overflow:hidden; }
+  .term .p { color:var(--green); }
+  .term .dim { color:var(--dim); }
+  .term .ok { color:var(--green); }
+  .term .hl { color:var(--blue); }
+
+  /* ---------- S3 web channel ---------- */
+  #s3 .browser { left:40px; top:80px; width:700px; height:560px; }
+  #s3 iframe { position:absolute; left:10px; top:48px; width:680px; height:502px;
+    border:0; background:#fff; border-radius:0 0 8px 8px; }
+  #s3 .halo { position:absolute; border-radius:50%; pointer-events:none;
+    border:3px solid var(--orange); box-shadow:0 0 24px 6px rgba(240,163,94,.55); }
+  #s3 .term { left:770px; top:90px; width:470px; height:520px; font-size:13.5px; }
+
+  /* ---------- S4 desktop channel ---------- */
+  #s4 .screen { position:absolute; left:40px; top:80px; width:680px; height:560px;
+    background:#0f141c; border:1px solid var(--line); border-radius:12px;
+    box-shadow:0 24px 70px rgba(0,0,0,.5); overflow:hidden; }
+  #s4 .screen img { position:absolute; left:20px; top:30px; width:640px; height:384px; border-radius:4px; }
+  #s4 .obox { position:absolute; border:2px solid var(--green); border-radius:6px; }
+  #s4 .obox span { position:absolute; left:0; top:-18px; font-family:var(--mono); font-size:11px;
+    color:var(--green); background:rgba(3,10,6,.75); padding:0 5px; border-radius:3px; }
+  #s4 .circle { position:absolute; width:74px; height:74px; border-radius:50%;
+    background:rgba(255,77,77,.28); border:3px solid var(--red);
+    box-shadow:0 0 30px 8px rgba(255,77,77,.35); }
+  #s4 .zoombadge { position:absolute; right:36px; top:44px; font-family:var(--mono); font-size:12px;
+    color:#0b0e14; background:var(--orange); padding:3px 10px; border-radius:20px; font-weight:700; }
+  #s4 .crosshair { position:absolute; color:var(--red); font-size:30px; font-weight:300;
+    font-family:var(--mono); text-shadow:0 0 12px rgba(255,77,77,.8); }
+  #s4 .term { left:750px; top:90px; width:490px; height:520px; font-size:13.5px; }
+
+  /* ---------- S5 architecture ---------- */
+  #s5 .archwrap { position:absolute; left:80px; top:100px; width:1120px; height:500px;
+    border-radius:10px; overflow:hidden; box-shadow:0 24px 80px rgba(0,0,0,.55); }
+  #s5 .archwrap img { width:1120px; height:500px; display:block; }
+  #s5 .scanbar { position:absolute; top:100px; width:3px; height:500px;
+    background:linear-gradient(180deg, transparent, var(--blue), transparent);
+    box-shadow:0 0 18px 4px rgba(76,141,255,.6); }
+  #s5 .badge { position:absolute; font-family:var(--mono); font-size:13px; font-weight:700;
+    padding:6px 14px; border-radius:20px; }
+  #s5 .badge.web { background:rgba(76,141,255,.16); color:var(--blue); border:1px solid var(--blue); }
+  #s5 .badge.desk { background:rgba(63,185,80,.14); color:var(--green); border:1px solid var(--green); }
+
+  /* ---------- S6 proof ---------- */
+  #s6 .cards { position:absolute; left:60px; top:110px; width:672px; }
+  #s6 .card { display:inline-block; vertical-align:top; width:300px; height:170px; margin:0 24px 24px 0;
+    background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:24px 26px; }
+  #s6 .num { font-size:58px; font-weight:800; letter-spacing:-.02em; line-height:1.05; }
+  #s6 .lbl { font-size:13.5px; color:var(--dim); margin-top:8px; line-height:1.5; }
+  #s6 .term { left:740px; top:110px; width:480px; height:360px; font-size:13px; }
+  #s6 .term .head { color:var(--orange); }
+
+  /* ---------- S7 CTA ---------- */
+  #s7 .big { position:absolute; left:0; right:0; top:170px; text-align:center;
+    font-size:58px; font-weight:800; letter-spacing:-.02em; }
+  #s7 .big em { font-style:normal;
+    background:linear-gradient(100deg, var(--blue), var(--green));
+    -webkit-background-clip:text; background-clip:text; color:transparent; }
+  #s7 .pill { position:absolute; left:50%; top:300px; width:760px; margin-left:-380px;
+    background:#0a0e14; border:1px solid var(--line); border-radius:12px; padding:22px 30px;
+    font-family:var(--mono); font-size:20px; color:var(--green);
+    box-shadow:0 24px 70px rgba(0,0,0,.5); }
+  #s7 .badges { position:absolute; left:0; right:0; top:420px; text-align:center; }
+  #s7 .bdg { display:inline-block; margin:0 8px; padding:8px 18px; border-radius:22px;
+    border:1px solid var(--line); background:var(--panel); font-family:var(--mono);
+    font-size:14px; color:var(--dim); }
+  #s7 .bdg b { color:var(--text); font-weight:600; }
+  #s7 .foot { position:absolute; left:0; right:0; top:540px; text-align:center; color:var(--dim);
+    font-family:var(--mono); font-size:15px; letter-spacing:.08em; }
+
+  /* ---------- S4b safety / S5b panel / S6b ecosystem ---------- */
+  #s4b .safety { position:absolute; left:830px; top:100px; width:410px; }
+  #s4b .sitem { border-left:3px solid var(--green); background:var(--panel);
+    border-radius:0 10px 10px 0; padding:12px 16px; margin-bottom:14px;
+    font-size:13px; color:var(--dim); line-height:1.45; }
+  #s4b .sitem b { display:block; color:var(--text); font-size:15px; margin-bottom:2px; }
+  #s5b .panelwrap { position:absolute; left:70px; top:100px; width:1140px; height:492px;
+    border-radius:10px; overflow:hidden; border:1px solid var(--line);
+    box-shadow:0 30px 90px rgba(0,0,0,.6); }
+  #s5b .panelwrap img { width:1140px; height:492px; display:block; }
+  #s5b .callout { position:absolute; font-family:var(--mono); font-size:13px; font-weight:700;
+    color:var(--text); background:rgba(11,14,20,.88); border:1px solid var(--blue);
+    padding:7px 14px; border-radius:20px; box-shadow:0 0 18px rgba(76,141,255,.35); }
+  #s6b .ecard { position:absolute; top:110px; background:var(--panel); border:1px solid var(--line);
+    border-radius:14px; padding:26px 28px; }
+  #s6b #s6b-mcp { left:60px; width:660px; height:340px; }
+  #s6b #s6b-agents { left:760px; width:460px; height:340px; }
+  #s6b .etitle { font-family:var(--mono); font-size:16px; color:var(--orange); margin-bottom:22px; }
+  #s6b .chip { display:inline-block; font-family:var(--mono); font-size:13.5px; color:var(--blue);
+    background:rgba(76,141,255,.1); border:1px solid rgba(76,141,255,.4);
+    border-radius:8px; padding:9px 14px; margin:0 10px 12px 0; }
+  #s6b .eline { font-size:14px; color:var(--dim); margin-bottom:18px; line-height:1.5; }
+  #s6b .eline b { color:var(--text); font-family:var(--mono); font-size:13.5px; }
+
+  /* ---------- design polish ---------- */
+  #grain { position:absolute; inset:-40px; pointer-events:none; opacity:.05; z-index:39;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='240' height='240' filter='url(%23n)' opacity='0.6'/%3E%3C/svg%3E"); }
+  #s1 .flare { position:absolute; left:660px; top:120px; width:900px; height:420px;
+    background:radial-gradient(closest-side, rgba(76,141,255,.28), rgba(63,185,80,.10) 55%, transparent 75%);
+    filter:blur(10px); }
+  #s1 .beam { position:absolute; left:660px; top:245px; width:600px; height:2px; transform-origin:left;
+    background:linear-gradient(90deg, transparent, var(--blue) 30%, var(--green) 70%, transparent);
+    box-shadow:0 0 24px 3px rgba(76,141,255,.5); }
+  #s1 .word span { display:inline-block;
+    background:linear-gradient(100deg, var(--blue) 10%, var(--green) 45%, #b6ffd0 50%, var(--green) 55%, var(--blue) 90%);
+    background-size:300% 100%; background-position:0% 0;
+    -webkit-background-clip:text; background-clip:text; color:transparent; }
+  .ch { display:inline-block; white-space:pre; }
+  #progress .tick { position:absolute; top:-2px; width:1px; height:7px; background:rgba(230,237,243,.35); }
+
+  /* ---------- overlays ---------- */
+  #scan { position:absolute; inset:0; pointer-events:none; opacity:.05; z-index:40;
+    background:repeating-linear-gradient(0deg, #fff 0 1px, transparent 1px 4px); }
+  #vig { position:absolute; inset:0; pointer-events:none; z-index:41;
+    background:radial-gradient(115% 100% at 50% 45%, transparent 55%, rgba(0,0,0,.5) 100%); }
+  #progress { position:absolute; left:0; bottom:0; width:100%; height:3px; background:#1a2130; z-index:50; }
+  #progress-fill { height:100%; width:0; background:linear-gradient(90deg, var(--blue), var(--green)); }
+  #play { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); z-index:99;
+    padding:16px 38px; font-size:18px; font-family:var(--mono); color:var(--text);
+    background:rgba(17,22,31,.92); border:1px solid var(--blue); border-radius:40px; cursor:pointer; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="dots"></div>
+
+  <!-- S1 · the problem first, then vco as the answer -->
+  <section class="scene" id="s1" data-start="0" data-end="11.2">
+    <div class="fakeapp" id="s1-app">
+      <div class="bar">
+        <span class="dot" style="background:#ff5f57"></span>
+        <span class="dot" style="background:#febc2e"></span>
+        <span class="dot" style="background:#28c840"></span>
+      </div>
+      <div class="fakebody">
+        <div class="sk" style="width:40%;height:20px"></div>
+        <div class="sk" style="width:90%;height:12px"></div>
+        <div class="sk" style="width:75%;height:12px"></div>
+        <div class="sk" style="width:82%;height:12px;margin-bottom:30px"></div>
+        <span class="btn" style="background:#2a3444;color:#8b949e" id="s1-btn">Save</span>
+        <span class="btn" style="background:#2a3444;color:#8b949e">Cancel</span>
+        <div class="sk" style="width:60%;height:12px;margin-top:34px"></div>
+        <div class="sk" style="width:70%;height:12px"></div>
+      </div>
+    </div>
+    <div class="cursor2" id="s1-cur2"></div>
+    <div class="ghost" id="s1-g1"></div>
+    <div class="ghost" id="s1-g2"></div>
+    <div class="ripple" id="s1-r1"></div>
+    <div class="ripple" id="s1-r2"></div>
+    <div class="ripple" id="s1-r3"></div>
+    <div class="ripple green" id="s1-r4"></div>
+    <div class="halo" id="s1-halo"></div>
+    <div class="lines">
+      <div class="ln" id="s1-l1">LLMs can write code.</div>
+      <div class="ln" id="s1-l2">LLMs can reason.</div>
+      <div class="ln bad" id="s1-l3">But they can't click a button.</div>
+    </div>
+    <div class="flare" id="s1-flare"></div>
+    <div class="beam" id="s1-beam"></div>
+    <div class="word" id="s1-word"><span>v</span><span>c</span><span>o</span></div>
+    <div class="sub" id="s1-sub"></div>
+    <div class="pill" id="s1-pill"><span>$ </span><span id="s1-cmd"></span><span class="cursor" id="s1-cur"></span></div>
+  </section>
+
+  <!-- S3 · web channel -->
+  <section class="scene" id="s3" data-start="10.8" data-end="20.2">
+    <div class="browser">
+      <div class="bar">
+        <span class="dot" style="background:#ff5f57"></span>
+        <span class="dot" style="background:#febc2e"></span>
+        <span class="dot" style="background:#28c840"></span>
+        <span class="url">http://127.0.0.1:9005 — headless chromium</span>
+      </div>
+      <iframe id="s3-frame" src="../examples/scroll_bug_fixture.html" tabindex="-1"></iframe>
+    </div>
+    <div class="halo" id="s3-halo"></div>
+    <div class="term" id="s3-term"></div>
+    <div class="caption"><b>Web channel</b> · DOM / accessibility-tree perception · no vision model at all</div>
+  </section>
+
+  <!-- S4 · desktop channel -->
+  <section class="scene" id="s4" data-start="19.8" data-end="28.2">
+    <div class="screen">
+      <img id="s4-img-clean" src="../debug/cases/case-01.png" alt="">
+      <img id="s4-img-coarse" src="../debug/results-center-delta/case-01/coarse-grid.png" alt="">
+      <img id="s4-img-zoom" src="../debug/results-center-delta/case-01/zoom-grid.png" alt="">
+      <div class="obox" id="s4-b1"><span>Back</span></div>
+      <div class="obox" id="s4-b2"><span>Preview</span></div>
+      <div class="obox" id="s4-b3"><span>Help</span></div>
+      <div class="obox" id="s4-b4"><span>Reset</span></div>
+      <div class="obox" id="s4-b5"><span>Save</span></div>
+      <div class="circle" id="s4-circle"></div>
+      <div class="zoombadge" id="s4-zoombadge">4× zoom</div>
+      <div class="crosshair" id="s4-cross">+</div>
+    </div>
+    <div class="term" id="s4-term"></div>
+    <div class="caption"><b>Desktop channel</b> · OCR first — vision model only as fallback · real mouse &amp; keyboard</div>
+  </section>
+
+  <!-- S4b · agent loop & safety -->
+  <section class="scene" id="s4b" data-start="27.8" data-end="34.6">
+    <div class="term" id="s4b-term" style="left:40px;top:90px;width:760px;height:520px;font-size:13.5px"></div>
+    <div class="safety" id="s4b-safe">
+      <div class="sitem" id="s4b-i1"><b>dry-run by default</b>real clicks need --execute</div>
+      <div class="sitem" id="s4b-i2"><b>ambiguous target → refuse</b>never a guessed click</div>
+      <div class="sitem" id="s4b-i3"><b>3 no-change actions → stuck stop</b>no infinite loops</div>
+      <div class="sitem" id="s4b-i4"><b>slam mouse to corner</b>pyautogui emergency stop</div>
+      <div class="sitem" id="s4b-i5"><b>strict JSON schema</b>no shell, no file actions</div>
+    </div>
+    <div class="caption"><b>The run loop</b> · every step saved, every step auditable</div>
+  </section>
+
+  <!-- S5 · architecture -->
+  <section class="scene" id="s5" data-start="34.2" data-end="40.4">
+    <div class="archwrap" id="s5-wrap"><img src="../assets/vco-architecture.png" alt=""></div>
+    <div class="scanbar" id="s5-scan"></div>
+    <div class="badge web" id="s5-b1">Web · headless, DOM control</div>
+    <div class="badge desk" id="s5-b2">Desktop · screenshot + OCR + real mouse</div>
+    <div class="caption"><b>Two channels</b> · deterministic-first · model-agnostic — any LLM that can run shell commands</div>
+  </section>
+
+  <!-- S5b · live debug panel (real screenshot of vco debug) -->
+  <section class="scene" id="s5b" data-start="40.0" data-end="46.4">
+    <div class="panelwrap" id="s5b-wrap"><img src="assets/panel.png" alt=""></div>
+    <div class="callout" id="s5b-c1">a browser you watch &amp; drive yourself</div>
+    <div class="callout" id="s5b-c2">⌘-click locks elements into cards</div>
+    <div class="callout" id="s5b-c3">export: where it broke · who owns it</div>
+    <div class="caption"><b>vco debug</b> · capture the scene, export the report — it never edits the page</div>
+  </section>
+
+  <!-- S6 · proof -->
+  <section class="scene" id="s6" data-start="46.0" data-end="53.2">
+    <div class="cards">
+      <div class="card"><div class="num" style="color:var(--green)" id="s6-n1">0</div>
+        <div class="lbl">model calls when OCR finds a unique text target</div></div>
+      <div class="card"><div class="num" style="color:var(--blue)" id="s6-n2">0%</div>
+        <div class="lbl">OCR-first accuracy on the real web-UI matrix (9/9)</div></div>
+      <div class="card"><div class="num" style="color:var(--orange)" id="s6-n3">0/10</div>
+        <div class="lbl">strict hits, MiniMax-M3 single-pass 16×16 grid</div></div>
+      <div class="card"><div class="num" style="color:var(--text)" id="s6-n4">0.00s</div>
+        <div class="lbl">per image on a local 1.6 GB vision model</div></div>
+    </div>
+    <div class="term" id="s6-term"></div>
+    <div class="caption"><b>vco webdebug</b> · findings come from the record, not the model's say-so</div>
+  </section>
+
+  <!-- S6b · ecosystem -->
+  <section class="scene" id="s6b" data-start="52.8" data-end="58.6">
+    <div class="ecard" id="s6b-mcp">
+      <div class="etitle">$ python3 -m vco.mcp_server</div>
+      <div class="chips" id="s6b-chips">
+        <span class="chip">web_snapshot</span><span class="chip">web_screenshot</span>
+        <span class="chip">web_click</span><span class="chip">web_run</span>
+        <span class="chip">screen_probe</span><span class="chip">screen_run</span>
+        <span class="chip">cache_status</span><span class="chip">cache_clear</span>
+      </div>
+    </div>
+    <div class="ecard" id="s6b-agents">
+      <div class="etitle">drops into any agent</div>
+      <div class="eline" id="s6b-e1"><b>skills/operate-screen</b> — tool-agnostic agent skill</div>
+      <div class="eline" id="s6b-e2"><b>plugins/vco</b> — Codex MCP packaging</div>
+      <div class="eline" id="s6b-e3"><b>Codex · Claude Code · Kimi</b> — any MCP-capable agent</div>
+    </div>
+    <div class="caption"><b>Ecosystem</b> · zero-dependency stdio MCP · 8 tools · model-agnostic by design</div>
+  </section>
+
+  <!-- S7 · CTA -->
+  <section class="scene" id="s7" data-start="58.2" data-end="66">
+    <div class="big" id="s7-big"><span id="s7-big-a"></span><em id="s7-big-b"></em><span id="s7-big-c"></span></div>
+    <div class="pill"><span class="p">$ </span><span id="s7-cmd"></span><span class="cursor" id="s7-cur"></span></div>
+    <div class="badges">
+      <span class="bdg" id="s7-b1">PyPI · <b>v0.1.7</b></span>
+      <span class="bdg" id="s7-b2">Python <b>3.9+</b></span>
+      <span class="bdg" id="s7-b3"><b>model-agnostic</b> · local-first</span>
+      <span class="bdg" id="s7-b4">github.com/<b>lo2589/vco</b></span>
+    </div>
+    <div class="foot" id="s7-foot">vco — visual computer operate · deterministic-first computer use</div>
+  </section>
+
+  <div id="grain"></div>
+  <div id="scan"></div>
+  <div id="vig"></div>
+  <div id="progress"><div id="progress-fill"></div></div>
+</div>
+<button id="play">▶ play with sound</button>
+<audio id="bgm" src="audio.wav" preload="auto"></audio>
+
+<script>
+'use strict';
+/* Every pixel is a pure function of time t (seconds). No CSS animations, no
+   wall-clock reads inside render() — the capture driver steps __setFrame(n). */
+const FPS = 30, DUR = 66;
+window.VCO_FPS = FPS;
+window.VCO_TOTAL_FRAMES = FPS * DUR;
+
+const $ = id => document.getElementById(id);
+const clamp = (v,a,b) => Math.min(b, Math.max(a, v));
+const seg = (t,a,b) => clamp((t-a)/(b-a), 0, 1);
+const eo  = p => 1 - Math.pow(1-p, 3);
+const eio = p => p < .5 ? 4*p*p*p : 1 - Math.pow(-2*p+2, 3)/2;
+
+function setText(el, s){ if (el.__s !== s){ el.__s = s; el.textContent = s; } }
+function typeInto(el, full, p){ setText(el, full.slice(0, Math.floor(full.length * clamp(p,0,1)))); }
+function show(el, o, rise){
+  el.style.opacity = clamp(o, 0, 1);
+  el.style.transform = rise ? `translateY(${(1-clamp(o,0,1))*rise}px)` : '';
+}
+/* split text into per-letter .ch spans once, return the spans */
+function splitLetters(el, text){
+  if (el.__split) return el.__split;
+  el.innerHTML = '';
+  const spans = [...text].map(c => {
+    const s = document.createElement('span');
+    s.className = 'ch'; s.textContent = c; s.style.opacity = 0;
+    el.appendChild(s); return s;
+  });
+  return el.__split = spans;
+}
+/* staggered per-letter reveal: opacity + rise + slight tracking settle */
+function letterIn(spans, t, t0, step, dur){
+  spans.forEach((s, i) => {
+    const p = eo(seg(t, t0 + i*step, t0 + i*step + dur));
+    s.style.opacity = p;
+    s.style.transform = `translateY(${(1-p)*22}px)`;
+  });
+}
+
+/* ---------------- S1 · problem first, vco as the answer ---------------- */
+const S1_CMD = "pip install 'vco[control,ocr,browser]'", S1_SUB = 'visual computer operate for LLMs';
+let S1_SAVE = { x: 62, y: 218 };   // resolved to the real Save center at init (app-relative)
+const S1_PATH = [ [0.3,300,430],[1.2,440,290],[2.2,250,250],[3.1,505,420],[4.3,330,330] ];
+function s1raw(t){
+  if (t <= S1_PATH[0][0]) return S1_PATH[0].slice(1);
+  for (let i=1;i<S1_PATH.length;i++){
+    if (t <= S1_PATH[i][0]){
+      const [t0,x0,y0] = S1_PATH[i-1], [t1,x1,y1] = S1_PATH[i], p = eio((t-t0)/(t1-t0));
+      return [x0+(x1-x0)*p, y0+(y1-y0)*p];
+    }
+  }
+  return S1_PATH[S1_PATH.length-1].slice(1);
+}
+function s1pos(t){
+  if (t >= 5.9) return [S1_SAVE.x, S1_SAVE.y];
+  if (t >= 4.9){
+    const [x0,y0] = s1raw(4.3), p = eio((t-4.9)/1.0);
+    return [x0+(S1_SAVE.x-x0)*p, y0+(S1_SAVE.y-y0)*p];
+  }
+  return s1raw(t);
+}
+function s1ripple(el, t, tc, x, y){
+  const p = seg(t, tc, tc+0.55);
+  el.style.opacity = p>0 && p<1 ? 0.85*(1-p) : 0;
+  const d = 10 + 55*eo(p);
+  el.style.left = (70+x-d/2)+'px'; el.style.top = (120+y-d/2)+'px';
+  el.style.width = el.style.height = d+'px';
+}
+function s1(t){
+  const app = $('s1-app');
+  app.style.opacity = seg(t, 0, 0.4);
+  const shake = seg(t, 3.25, 3.75);
+  app.style.transform = shake > 0 && shake < 1
+    ? `translate(${Math.sin(t*70)*7*(1-shake)}px, ${Math.cos(t*60)*4*(1-shake)}px)` : '';
+  const [x,y] = s1pos(t);
+  const c = $('s1-cur2');
+  c.style.left = (70+x)+'px'; c.style.top = (120+y)+'px';
+  c.style.opacity = seg(t, 0.1, 0.35) * (1 - seg(t, 7.0, 7.4));
+  [['s1-g1', 0.13, 0.4], ['s1-g2', 0.26, 0.2]].forEach(([id, dt, o]) => {
+    const g = $(id), [gx,gy] = s1pos(t - dt);
+    g.style.left = (70+gx)+'px'; g.style.top = (120+gy)+'px';
+    g.style.opacity = o * parseFloat(c.style.opacity || 0);
+    g.style.transform = `scale(${1 - dt})`;
+  });
+  // three misses, then the resolution
+  s1ripple($('s1-r1'), t, 1.35, 440, 290);
+  s1ripple($('s1-r2'), t, 2.35, 250, 250);
+  s1ripple($('s1-r3'), t, 3.25, 505, 420);
+  const halo = $('s1-halo');
+  if (t >= 5.9 && t <= 6.9){
+    const d = 64 * (1 + 0.12*Math.sin((t-5.9)*14));
+    halo.style.opacity = t > 6.5 ? 1-seg(t,6.5,6.9) : seg(t,5.9,6.15);
+    halo.style.left = (70+S1_SAVE.x-d/2)+'px'; halo.style.top = (120+S1_SAVE.y-d/2)+'px';
+    halo.style.width = halo.style.height = d+'px';
+  } else halo.style.opacity = 0;
+  s1ripple($('s1-r4'), t, 6.55, S1_SAVE.x, S1_SAVE.y);
+  const bp = seg(t, 6.55, 6.9) * (1 - seg(t, 7.6, 8.4));
+  const btn = $('s1-btn');
+  btn.style.background = bp > 0.01 ? `rgba(63,185,80,${0.35 + bp*0.5})` : '';
+  btn.style.boxShadow = bp > 0.01 ? `0 0 ${22*bp}px rgba(63,185,80,.6)` : '';
+  // act-1 copy, gone before the brand lands
+  show($('s1-l1'), seg(t,0.5,1.0) * (1-seg(t,4.4,4.8)), 18);
+  show($('s1-l2'), seg(t,1.5,2.0) * (1-seg(t,4.4,4.8)), 18);
+  show($('s1-l3'), seg(t,2.7,3.3) * (1-seg(t,4.9,5.4)), 18);
+  // act-2: beam pulls the wordmark in as the answer
+  const bq = eio(seg(t, 6.5, 7.0));
+  const beam = $('s1-beam');
+  beam.style.transform = `scaleX(${bq})`;
+  beam.style.opacity = (bq > 0 ? 1 : 0) * (1 - seg(t, 7.3, 7.9));
+  [...$('s1-word').children].forEach((s, i) => {
+    const p = eo(seg(t, 6.9 + i*0.14, 7.3 + i*0.14));
+    s.style.opacity = p;
+    s.style.transform = `translateY(${(1-p)*70}px) scale(${1.25 - 0.25*p})`;
+    s.style.filter = `drop-shadow(0 0 ${34*p}px rgba(76,141,255,.35))`;
+    s.style.backgroundPosition = `${eo(seg(t, 7.9, 9.0)) * 100}% 0`;
+  });
+  const fl = $('s1-flare'), fp = eo(seg(t, 6.9, 7.9));
+  fl.style.opacity = fp * (0.75 + 0.25*Math.sin(t*1.4));
+  fl.style.transform = `scale(${0.7 + 0.3*fp})`;
+  letterIn(splitLetters($('s1-sub'), S1_SUB), t, 7.9, 0.022, 0.3);
+  show($('s1-pill'), seg(t, 8.9, 9.3), 14);
+  typeInto($('s1-cmd'), S1_CMD, seg(t, 9.3, 10.7));
+  $('s1-cur').style.opacity = (t % 1) < 0.55 ? 1 : 0;
+}
+
+/* ---------------- S3 ---------------- */
+let s3halo = null;            // {x,y} in stage coords, resolved once iframe loads
+let s3clicked = false;
+const S3_TERM = [
+  [11.5, 12.5, 'p',   '$ vco webtext http://127.0.0.1:9005'],
+  [13.0, 13.01,'dim', '\n- button "Refresh list"\n- button "Relayout"\n- textbox "say something"'],
+  [13.6, 13.61,'hl',  '\n- button "Send"'],
+  [14.6, 16.1, 'p',   '\n\n$ vco webclick :9005 --target Send --expect hello'],
+  [17.4, 17.41,'ok',  '\n{"clicked": true, "target": "Send",\n "x": 337, "y": 407, "verified": true}'],
+];
+function s3(t){
+  const term = $('s3-term');
+  let html = '';
+  for (const [a,b,cls,txt] of S3_TERM){
+    if (t < a) break;
+    const n = b - a <= 0.05 ? txt.length : Math.floor(txt.length * seg(t,a,b));
+    html += `<span class="${cls}">${txt.slice(0,n).replace(/</g,'&lt;')}</span>`;
+  }
+  if (term.__h !== html){ term.__h = html; term.innerHTML = html; }
+
+  const fr = $('s3-frame');
+  try {
+    const doc = fr.contentDocument;
+    if (doc){
+      const input = doc.getElementById('say');
+      if (input){
+        const fill = 'hello from vco';
+        input.value = t >= 15.0 ? fill.slice(0, Math.ceil(fill.length * seg(t,15.0,16.0))) : '';
+      }
+      if (t >= 16.9 && !s3clicked){ s3clicked = true; doc.getElementById('send').click(); }
+      if (t < 16.9) s3clicked = false;
+    }
+  } catch(e){}
+
+  const halo = $('s3-halo');
+  if (s3halo && t >= 16.1 && t <= 17.2){
+    const pulse = 1 + 0.12*Math.sin((t-16.1)*14);
+    const d = 64*pulse;
+    halo.style.opacity = t > 16.85 ? 1-seg(t,16.85,17.2) : seg(t,16.1,16.35);
+    halo.style.left = (s3halo.x - d/2)+'px'; halo.style.top = (s3halo.y - d/2)+'px';
+    halo.style.width = halo.style.height = d+'px';
+  } else halo.style.opacity = 0;
+}
+
+/* ---------------- S4 ---------------- */
+/* OCR boxes in case-01.png pixel space, padded to the button rects. */
+const S4_BOXES = [
+  ['s4-b1', 104,181, 98,54], ['s4-b2', 436,180,122,56], ['s4-b3', 789,176, 96,62],
+  ['s4-b4',  99,468,106,53], ['s4-b5', 757,471, 96,51],
+];
+const S4_SC = 0.64, S4_OX = 20, S4_OY = 30;   // img offset inside .screen (boxes are children of .screen)
+const S4_SAVE = [805, 496.5];
+const S4_TERM = [
+  [20.4, 21.2, 'p',  '$ vco find --target Save'],
+  [22.4, 22.41,'ok', '\n{"found": true, "x": 805, "y": 497,\n "method": "ocr", "model_calls": 0}'],
+  [23.9, 23.91,'dim','\n\n# no text on the target? the vision model'],
+  [24.4, 24.41,'dim','\n# picks cells on a numbered grid — zoom in:'],
+  [25.9, 25.91,'hl', '\n{"type":"click","target":{"cell":11,\n  "offset_x":0.5,"offset_y":0.5}}'],
+  [26.9, 26.91,'ok', '\n→ local code maps cell → screen coordinates'],
+];
+function s4(t){
+  const term = $('s4-term');
+  let html = '';
+  for (const [a,b,cls,txt] of S4_TERM){
+    if (t < a) break;
+    const n = b - a <= 0.05 ? txt.length : Math.floor(txt.length * seg(t,a,b));
+    html += `<span class="${cls}">${txt.slice(0,n)}</span>`;
+  }
+  if (term.__h !== html){ term.__h = html; term.innerHTML = html; }
+
+  S4_BOXES.forEach(([id,bx,by,bw,bh], i) => {
+    const el = $(id), p = eo(seg(t, 20.6 + i*0.16, 21.1 + i*0.16));
+    el.style.opacity = p * (1 - seg(t, 23.5, 23.8));
+    el.style.left = (S4_OX + bx*S4_SC)+'px'; el.style.top = (S4_OY + by*S4_SC)+'px';
+    el.style.width = (bw*S4_SC)+'px'; el.style.height = (bh*S4_SC)+'px';
+    el.style.transform = `scale(${1.12 - 0.12*p})`;
+  });
+
+  const cir = $('s4-circle');
+  const cp = eo(seg(t, 22.2, 22.7)), cfade = 1 - seg(t, 23.5, 23.8);
+  const cd = (54 + 6*Math.sin(t*6)) * (0.6 + 0.4*cp);
+  cir.style.opacity = cp * cfade;
+  cir.style.left = (S4_OX + S4_SAVE[0]*S4_SC - cd/2)+'px';
+  cir.style.top  = (S4_OY + S4_SAVE[1]*S4_SC - cd/2)+'px';
+  cir.style.width = cir.style.height = cd+'px';
+
+  $('s4-img-clean').style.opacity  = 1 - seg(t, 23.6, 23.9);
+  $('s4-img-coarse').style.opacity = seg(t, 23.6, 23.9) * (1 - seg(t, 25.0, 25.3));
+  const zp = eio(seg(t, 25.0, 25.6));
+  const zi = $('s4-img-zoom');
+  zi.style.opacity = zp;
+  zi.style.transformOrigin = '62% 78%';
+  zi.style.transform = `scale(${1.6 - 0.6*zp})`;
+  $('s4-zoombadge').style.opacity = seg(t, 25.4, 25.8);
+
+  const cross = $('s4-cross');
+  const cxp = seg(t, 26.0, 26.5);
+  cross.style.opacity = cxp * (1 - seg(t, 27.3, 27.7));
+  // zoom-grid.png (500x300 shown at 640x384): cell 11 center = display (400,240)
+  cross.style.left = (120 + (420-120)*eio(cxp) - 9)+'px';
+  cross.style.top  = (100 + (270-100)*eio(cxp) - 17)+'px';
+}
+
+/* ---------------- S4b · agent loop & safety ---------------- */
+const S4B_TERM = [
+  [28.4, 29.5, 'p',  "$ vco run --task '点击保存按钮，看到成功状态后结束' --max-steps 5"],
+  [29.9, 29.91,'hl', '\n\nstep-001  {"type":"click","target":{"cell":11,\n            "offset_x":0.5,"offset_y":0.5}}'],
+  [30.6, 30.61,'dim','\n          -> screen changed'],
+  [31.1, 31.11,'hl', '\n\nstep-002  {"type":"done","reason":"已看到保存成功状态"}'],
+  [31.8, 31.81,'ok', '\n\n"status": "done"  — dry-run: the mouse never moved'],
+];
+function s4b(t){
+  const term = $('s4b-term');
+  let html = '';
+  for (const [a,b,cls,txt] of S4B_TERM){
+    if (t < a) break;
+    const n = b - a <= 0.05 ? txt.length : Math.floor(txt.length * seg(t,a,b));
+    html += `<span class="${cls}">${txt.slice(0,n)}</span>`;
+  }
+  if (term.__h !== html){ term.__h = html; term.innerHTML = html; }
+  for (let i = 1; i <= 5; i++)
+    show($('s4b-i'+i), seg(t, 31.6 + (i-1)*0.15, 32.0 + (i-1)*0.15), 14);
+}
+
+/* ---------------- S5 ---------------- */
+function s5(t){
+  const p = eio(seg(t, 34.6, 36.2));
+  $('s5-wrap').style.width = (1120*p)+'px';
+  const bar = $('s5-scan');
+  bar.style.left = (80 + 1120*p)+'px';
+  bar.style.opacity = (p > 0 && p < 1) ? 1 : 0;
+  const pulse = 0.6 + 0.4*Math.sin(t*3.2);
+  const b1 = $('s5-b1'), b2 = $('s5-b2');
+  b1.style.left = '80px'; b1.style.top = '58px';
+  b2.style.left = '80px'; b2.style.top = '612px';
+  show(b1, seg(t, 36.8, 37.3), 10);
+  show(b2, seg(t, 37.3, 37.8), 10);
+  b1.style.boxShadow = `0 0 ${18*pulse}px rgba(76,141,255,${0.5*pulse})`;
+  b2.style.boxShadow = `0 0 ${18*pulse}px rgba(63,185,80,${0.5*pulse})`;
+}
+
+/* ---------------- S5b · live debug panel ---------------- */
+function s5b(t){
+  const p = eio(seg(t, 40.4, 41.2));
+  const w = $('s5b-wrap');
+  w.style.opacity = p;
+  w.style.transform = `scale(${1.06 - 0.06*p})`;
+  const c1 = $('s5b-c1'), c2 = $('s5b-c2'), c3 = $('s5b-c3');
+  c1.style.left = '130px'; c1.style.top = '470px';
+  c2.style.left = '920px'; c2.style.top = '150px';
+  c3.style.left = '920px'; c3.style.top = '330px';
+  show(c1, seg(t, 42.0, 42.5), 12);
+  show(c2, seg(t, 42.6, 43.1), 12);
+  show(c3, seg(t, 43.2, 43.7), 12);
+}
+
+/* ---------------- S6 ---------------- */
+function s6(t){
+  const p = eo(seg(t, 46.8, 49.8));
+  document.querySelectorAll('#s6 .card').forEach((card, i) => {
+    const cp = eo(seg(t, 46.5 + i*0.16, 47.05 + i*0.16));
+    card.style.opacity = cp;
+    card.style.transform = `translateY(${(1-cp)*40}px)`;
+  });
+  setText($('s6-n1'), '0');
+  setText($('s6-n2'), Math.round(100*p) + '%');
+  setText($('s6-n3'), Math.round(10*p) + '/10');
+  setText($('s6-n4'), (2.67*p).toFixed(2) + 's');
+  const json = '{\n  "reproduced": true,\n  "culprit": "HTMLButtonElement\n    .rebuildList (…:25:19)",\n  "how": "assigned"\n}';
+  const head = '$ vco webdebug :8772 --task "list jumped to the top"\n\n';
+  const hp = seg(t, 49.1, 49.6);
+  const typed = json.slice(0, Math.floor(json.length * seg(t, 49.8, 51.6)));
+  const html = `<span class="head">${head.slice(0, Math.floor(head.length*hp))}</span><span class="ok">${typed}</span>`;
+  const term = $('s6-term');
+  if (term.__h !== html){ term.__h = html; term.innerHTML = html; }
+}
+
+/* ---------------- S6b · ecosystem ---------------- */
+function s6b(t){
+  show($('s6b-mcp'), seg(t, 53.1, 53.6), 24);
+  document.querySelectorAll('#s6b .chip').forEach((c, i) => {
+    const p = eo(seg(t, 53.8 + i*0.1, 54.15 + i*0.1));
+    c.style.opacity = p;
+    c.style.transform = `translateY(${(1-p)*14}px)`;
+  });
+  show($('s6b-agents'), seg(t, 53.5, 54.0), 24);
+  show($('s6b-e1'), seg(t, 54.6, 55.0), 10);
+  show($('s6b-e2'), seg(t, 55.0, 55.4), 10);
+  show($('s6b-e3'), seg(t, 55.4, 55.8), 10);
+}
+
+/* ---------------- S7 ---------------- */
+const S7_CMD = "pip install 'vco[control,ocr,browser]'";
+function s7(t){
+  // headline: kinetic per-letter reveal; the gradient phrase lands as one block
+  const em = $('s7-big-b');
+  if (!em.__init){ em.__init = 1; em.textContent = 'a mouse'; }
+  const parts = [splitLetters($('s7-big-a'), 'Give your LLM '),
+                 splitLetters($('s7-big-c'), '.')];
+  let i = 0;
+  for (const spans of parts){
+    for (const s of spans){
+      const delay = s.parentNode.id === 's7-big-c' ? 59.8 : 58.75 + i*0.03;
+      const p = eo(seg(t, delay, delay + 0.4));
+      s.style.opacity = p;
+      s.style.transform = `translateY(${(1-p)*26}px) rotate(${(1-p)*-6}deg)`;
+      i++;
+    }
+  }
+  const ep = eo(seg(t, 59.25, 59.75));
+  em.style.opacity = ep;
+  em.style.transform = `translateY(${(1-ep)*26}px) scale(${1.15-0.15*ep})`;
+  typeInto($('s7-cmd'), S7_CMD, seg(t, 59.9, 61.6));
+  $('s7-cur').style.opacity = (t % 1) < 0.55 ? 1 : 0;
+  show($('s7-b1'), seg(t, 62.1, 62.5), 12);
+  show($('s7-b2'), seg(t, 62.3, 62.7), 12);
+  show($('s7-b3'), seg(t, 62.5, 62.9), 12);
+  show($('s7-b4'), seg(t, 62.7, 63.1), 12);
+  show($('s7-foot'), seg(t, 63.7, 64.4), 10);
+}
+
+/* ---------------- director ---------------- */
+const scenes = [...document.querySelectorAll('.scene')];
+function render(t){
+  for (const s of scenes){
+    const a = +s.dataset.start, b = +s.dataset.end;
+    const oi = seg(t, a, a+0.55), oo = seg(t, b-0.55, b);
+    const o = clamp(Math.min(oi, 1-oo), 0, 1);
+    s.style.opacity = o;
+    s.style.visibility = o <= 0 ? 'hidden' : 'visible';
+    // scale/blur push transition + a slow drift that keeps each shot breathing
+    const sc = 1 - 0.035*(1-eio(oi)) - 0.018*eio(oo) + 0.014*seg(t, a, b);
+    const bl = 7*(1-eio(oi)) + 5*eio(oo);
+    s.style.transform = `scale(${sc})`;
+    s.style.filter = bl > 0.05 ? `blur(${bl}px)` : '';
+  }
+  s1(t); s3(t); s4(t); s4b(t); s5(t); s5b(t); s6(t); s6b(t); s7(t);
+  $('progress-fill').style.width = (clamp(t/DUR,0,1)*100) + '%';
+  // film grain: deterministic per-frame jitter
+  const n = Math.round(t*FPS);
+  $('grain').style.transform = `translate(${(n*37)%19-9}px, ${(n*53)%17-8}px)`;
+}
+window.__setFrame = n => render(n / FPS);
+
+/* chapter ticks on the progress bar */
+for (const s of scenes){
+  const a = +s.dataset.start;
+  if (a <= 0) continue;
+  const tick = document.createElement('div');
+  tick.className = 'tick';
+  tick.style.left = (a/DUR*100) + '%';
+  $('progress').appendChild(tick);
+}
+
+/* capture mode: fully deterministic, driven externally */
+const capture = location.hash === '#capture';
+
+/* resolve the S1 Save button center (app-relative) + the S3 halo position */
+function resolveTargets(){
+  try {
+    const app = $('s1-app'), btn = $('s1-btn');
+    const r = btn.getBoundingClientRect(), a = app.getBoundingClientRect(), k = a.width / 560;
+    S1_SAVE = { x: (r.left + r.width/2 - a.left)/k, y: (r.top + r.height/2 - a.top)/k };
+  } catch(e){}
+  try {
+    const fr = $('s3-frame'), btn = fr.contentDocument.getElementById('send');
+    const r = btn.getBoundingClientRect(), f = fr.getBoundingClientRect(), st = $('stage').getBoundingClientRect();
+    s3halo = { x: (f.left - st.left) + r.left + r.width/2, y: (f.top - st.top) + r.top + r.height/2 };
+  } catch(e){ s3halo = { x: 390, y: 500 }; }
+}
+
+/* interactive mode: fit stage to window, rAF clock, sound on user gesture */
+function fit(){
+  if (capture) return;
+  const k = Math.min(innerWidth/1280, innerHeight/720) * 0.96;
+  $('stage').style.transform = `translate(-50%,-50%) scale(${k})`;
+}
+addEventListener('resize', fit); fit();
+
+let t0 = -1;
+function loop(now){
+  if (t0 < 0) t0 = now;
+  const t = (now - t0)/1000;
+  if (t >= DUR){ render(DUR); return; }
+  render(t);
+  requestAnimationFrame(loop);
+}
+
+const imgs = [...document.images].map(im => im.complete ? 1 : im.decode().catch(()=>1));
+const frameReady = new Promise(res => {
+  const fr = $('s3-frame');
+  if (fr.contentDocument && fr.contentDocument.readyState === 'complete') res();
+  else fr.addEventListener('load', res, { once:true });
+});
+Promise.all([...imgs, frameReady, document.fonts.ready]).then(() => {
+  resolveTargets();
+  render(0);
+  window.__READY = true;
+  if (!capture){
+    $('play').style.display = '';
+    $('play').addEventListener('click', () => {
+      $('play').style.display = 'none';
+      $('bgm').play().catch(()=>{});
+      requestAnimationFrame(loop);
+    });
+  }
+});
+if (capture) $('play').style.display = 'none';
+</script>
+</body>
+</html>
