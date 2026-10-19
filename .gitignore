@@ -31,3 +31,7 @@ provider_settings.*.json
 HANDOFF.md
 vco-click-trace.md
 .kimi-code/
+
+# 宣传片渲染产物（promo/render.py 会重新生成；成片在 assets/）
+promo/audio.wav
+promo/*.mp4
