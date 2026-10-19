@@ -91,6 +91,7 @@ class ComputerUseLoop:
         artifact_root: Path,
         settle_seconds: float = 0.7,
         max_unchanged: int = 3,
+        on_step=None,
     ):
         self.capture = capture
         self.provider = provider
@@ -103,6 +104,11 @@ class ComputerUseLoop:
         # was: the model is stuck, and more steps only repeat the miss.
         # 0 disables the check.
         self.max_unchanged = max_unchanged
+        # Optional ``on_step(step_index, title, detail, image_path, elapsed)``,
+        # called after each observation is written. A viewer (the float_steps
+        # overlay) uses it to show the frame the model is about to decide on.
+        # Best-effort by contract: the loop never lets a viewer raise.
+        self.on_step = on_step
         self.mapper = GridMapper(region, grid)
 
     def run(self, task: str, *, max_steps: int = 12) -> LoopResult:
@@ -150,6 +156,15 @@ class ComputerUseLoop:
                 summary=f"step {step}/{max_steps} screenshot",
                 image=grid_path.name,
             )
+            if self.on_step is not None:
+                # A viewer failure must never take the run down: the overlay is
+                # a display nicety, exactly like the board.
+                try:
+                    self.on_step(step, f"step {step:03d}",
+                                 f"deciding ({len(history)} done)",
+                                 str(grid_path), None)
+                except Exception:  # noqa: BLE001
+                    pass
 
             action = self.provider.choose_action(
                 task=_task_with_history(task, history),

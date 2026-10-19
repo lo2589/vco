@@ -371,9 +371,11 @@ class DebugSession:
         # directories. The panel reads them so an automated run shows up in the
         # same place you inspect pages by hand.
         self.runs_root = Path(runs_root) if runs_root else Path("cache")
-        # Where a pick's screenshot is kept. Beside the webbug/webshot output,
-        # so every picture this tool takes lands in one place.
-        self.shots_dir = Path(".screenshot")
+        # Where a pick's screenshot is kept. `.vco-runtime/shots/` is the same
+        # directory the dsh plugin's shot route serves, so a path that shows up
+        # in a card also resolves over HTTP (the old `.screenshot/` default
+        # produced paths the dsh page could only 404).
+        self.shots_dir = Path(".vco-runtime/shots")
         self.dsh_auth = dsh_auth
         self.extra_headers = dict(extra_headers or {})
         self.dsh_secret: bytes | None = load_dsh_secret() if dsh_auth else None
@@ -395,6 +397,12 @@ class DebugSession:
         self.client_info: dict = {}
         self.client_pulse: dict = {}
         self._last_shot_error = ""
+        # CDP screencast state. Frames are pushed by Chromium when it works;
+        # `_screencast_ok` False (or a silent `_last_screencast_ts`) is what
+        # hands the frame loop back to the slow screenshot fallback.
+        self._cdp = None
+        self._screencast_ok = False
+        self._last_screencast_ts = 0.0
 
     # --- browser lifecycle --------------------------------------------------
 
@@ -471,8 +479,56 @@ class DebugSession:
                 await self._page.goto(self.target, wait_until="domcontentloaded", timeout=30000)
             except Exception as exc:  # noqa: BLE001
                 self._broadcast({"type": "error", "text": "initial goto: " + str(exc)})
+        try:
+            await self._start_screencast()
+        except Exception as exc:  # noqa: BLE001
+            # Screencast is the fast path, not a requirement: any failure here
+            # (old Chromium, a driver without the Page domain) just leaves the
+            # flag down and the fallback loop below keeps the panel fed.
+            _trace("screencast unavailable, falling back to polling:", exc)
+            self._screencast_ok = False
         # Start the screenshot loop on the same loop.
         self._loop_task = asyncio.ensure_future(self._screenshot_loop())
+
+    async def _start_screencast(self) -> None:
+        """Stream frames from Chromium itself instead of polling screenshots.
+
+        CDP screencast pushes a JPEG whenever the page repaints — no 250ms
+        tick, no PNG encode on the critical path, and a frame arrives the
+        moment something changes rather than up to half a second later.
+        Raises when the driver cannot do it; the caller downgrades to the
+        polling fallback.
+        """
+
+        cdp = await self._ctx.new_cdp_session(self._page)
+
+        def _on_frame(params: dict) -> None:
+            # Runs on the event loop thread. The ack is Chromium's
+            # backpressure: skip it and the screencast silently stops.
+            session_id = params.get("sessionId")
+            if session_id is not None:
+                asyncio.ensure_future(cdp.send(
+                    "Page.screencastFrameAck", {"sessionId": session_id}))
+            data = params.get("data")
+            if not data:
+                return
+            self._last_screencast_ts = time.monotonic()
+            self._last_shot_error = ""
+            meta = params.get("metadata") or {}
+            self._broadcast({
+                "type": "frame",
+                "jpeg": data,
+                "w": meta.get("deviceWidth"),
+                "h": meta.get("deviceHeight"),
+            })
+
+        # Playwright emits CDP events under their fully-qualified domain name.
+        cdp.on("Page.screencastFrame", _on_frame)
+        await cdp.send("Page.startScreencast", {
+            "format": "jpeg", "quality": 75, "everyNthFrame": 1,
+        })
+        self._cdp = cdp
+        self._screencast_ok = True
 
     # --- auth / injection helpers ------------------------------------------
 
@@ -639,31 +695,80 @@ class DebugSession:
         the screenshot rides the existing channel instead of being written to
         disk and served back over a second route: one image definition, two
         consumers. The copy on disk is what a report can point at later, and it
-        lands in `.screenshot/` beside the webbug/webshot output, named the same
-        way.
+        lands in `.vco-runtime/shots/` where the dsh shot route can serve it.
 
-        Returns ``{path, png}`` (absolute path and base64 PNG) or None.
+        Viewport JPEG, not full-page PNG: a card thumbnail never needs the
+        whole scroll height, and on an infinite-feed page a full_page capture
+        takes seconds and megabytes — right at the moment the user is waiting
+        for the lock to feel instant.
+
+        Returns ``{path, jpeg}`` (absolute path and base64 JPEG) or None.
         """
         if not self._page or self._page.is_closed():
             return None
         try:
-            png = await self._page.screenshot(type="png", full_page=True)
+            jpeg = await self._page.screenshot(type="jpeg", quality=85, full_page=False)
         except Exception:  # noqa: BLE001
-            try:
-                png = await self._page.screenshot(type="png", full_page=False)
-            except Exception:  # noqa: BLE001
-                return None
-        stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime())
-        slug = re.sub(r"[^a-z0-9]+", "-", (label or "pick").lower()).strip("-")[:40] or "pick"
-        target = self.shots_dir / f"pick-{stamp}-{int(time.time() * 1000) % 1000:03d}-{slug}.png"
+            return None
+        target = self.shots_dir / self._shot_name(label, ".jpg")
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(png)
+            target.write_bytes(jpeg)
         except OSError:
             target = None
         return {
-            "path": str(target) if target else "",
-            "png": base64.b64encode(png).decode("ascii"),
+            "path": str(target.resolve()) if target else "",
+            "jpeg": base64.b64encode(jpeg).decode("ascii"),
+        }
+
+    @staticmethod
+    def _shot_name(label: str, suffix: str) -> str:
+        stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime())
+        slug = re.sub(r"[^a-z0-9]+", "-", (label or "pick").lower()).strip("-")[:40] or "pick"
+        return f"pick-{stamp}-{int(time.time() * 1000) % 1000:03d}-{slug}{suffix}"
+
+    async def _clip_screenshot(self, desc: dict, shot: dict | None, label: str) -> dict | None:
+        """Capture just the locked element's rectangle, alongside the page shot.
+
+        A card about one element answers "which one" fastest with a picture of
+        that element alone. ``desc['rect']`` is in CSS viewport pixels (from
+        getBoundingClientRect), which is exactly what ``clip=`` wants — but the
+        element may hang off the viewport, so clamp to it and skip the clip
+        entirely when nothing of the element is on screen.
+
+        Returns ``{path, jpeg}`` or None.
+        """
+        rect = desc.get("rect") or {}
+        viewport = self._page.viewport_size if self._page else None
+        if not viewport:
+            return None
+        x = max(0.0, float(rect.get("x") or 0))
+        y = max(0.0, float(rect.get("y") or 0))
+        w = min(float(rect.get("w") or 0), viewport["width"] - x)
+        h = min(float(rect.get("h") or 0), viewport["height"] - y)
+        if w <= 0 or h <= 0:
+            return None
+        try:
+            jpeg = await self._page.screenshot(
+                type="jpeg", quality=90, full_page=False,
+                clip={"x": x, "y": y, "width": w, "height": h},
+            )
+        except Exception:  # noqa: BLE001
+            return None
+        # Same directory and slug as the page shot, so the pair sorts together.
+        if shot and shot.get("path"):
+            target = Path(shot["path"]).with_name(
+                Path(shot["path"]).stem + "-clip.jpg")
+        else:
+            target = self.shots_dir / self._shot_name(label, "-clip.jpg")
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(jpeg)
+        except OSError:
+            target = None
+        return {
+            "path": str(target.resolve()) if target else "",
+            "jpeg": base64.b64encode(jpeg).decode("ascii"),
         }
 
     async def _teardown_browser(self) -> None:
@@ -672,6 +777,14 @@ class DebugSession:
                 self._loop_task.cancel()
         except Exception:  # noqa: BLE001
             pass
+        try:
+            if self._cdp is not None:
+                await self._cdp.send("Page.stopScreencast")
+                await self._cdp.detach()
+        except Exception:  # noqa: BLE001
+            pass
+        self._cdp = None
+        self._screencast_ok = False
         try:
             if self._browser:
                 await self._browser.close()
@@ -702,28 +815,22 @@ class DebugSession:
             return
         try:
             self.last_url = frame.url
-            # Force the next screenshot to be broadcast even if the
-            # previous frame happened to hash the same.
-            self._last_digest = b""
             self._broadcast({"type": "navigated", "url": frame.url, "title": ""})
             # The init script runs again on the new document; re-check cheaply
             # rather than assuming, then re-measure the locked elements so the
             # panel's markers either follow them or go dashed.
             self._inject_ok = False
-            # Kick a screenshot capture immediately so the panel doesn't
-            # have to wait up to 0.25s for the loop to tick. The actual
-            # rendering of the new page may take a moment, so we also
-            # let the loop's next iteration broadcast a fresh frame
-            # once the new DOM is in place.
+            # Kick a capture immediately so the panel doesn't wait for the
+            # screencast (or the fallback tick) to notice the new page. The
+            # screencast's own frames will take over from here.
             if self.loop and self._page and not self._page.is_closed():
                 async def _snap():
                     try:
-                        png = await self._page.screenshot(type="png", full_page=False)
-                        import hashlib as _hl
-                        self._last_digest = _hl.md5(png).digest()
+                        jpeg = await self._page.screenshot(
+                            type="jpeg", quality=75, full_page=False)
                         self._broadcast({
                             "type": "frame",
-                            "png": base64.b64encode(png).decode("ascii"),
+                            "jpeg": base64.b64encode(jpeg).decode("ascii"),
                         })
                     except Exception:  # noqa: BLE001
                         pass
@@ -749,27 +856,25 @@ class DebugSession:
     # --- screenshot loop ----------------------------------------------------
 
     async def _screenshot_loop(self) -> None:
-        import hashlib
-        # Skip broadcasting a frame when the page hasn't changed visually
-        # — this is what stops the panel from flickering on a static page.
-        # _last_digest may be reset to b"" by ws connect / navigation to
-        # force a fresh frame to the new client.
-        self._last_digest = b""
+        # Watchdog, not producer: the CDP screencast pushes frames on every
+        # repaint, so this loop only steps in when the screencast never started
+        # or has gone silent — a slow tick whose JPEG still keeps the panel
+        # alive instead of freezing on the last frame it ever saw.
         while not self._stopping:
             try:
                 if not self._page or self._page.is_closed():
-                    await asyncio.sleep(0.2)
+                    await asyncio.sleep(1.0)
                     continue
-                png = await self._page.screenshot(type="png", full_page=False)
+                silent = time.monotonic() - self._last_screencast_ts > 8.0
+                if self._screencast_ok and not silent:
+                    await asyncio.sleep(1.0)
+                    continue
+                jpeg = await self._page.screenshot(
+                    type="jpeg", quality=75, full_page=False)
                 self._last_shot_error = ""
-                digest = hashlib.md5(png).digest()
-                if digest == self._last_digest:
-                    await asyncio.sleep(0.25)
-                    continue
-                self._last_digest = digest
                 self._broadcast({
                     "type": "frame",
-                    "png": base64.b64encode(png).decode("ascii"),
+                    "jpeg": base64.b64encode(jpeg).decode("ascii"),
                 })
             except asyncio.CancelledError:
                 break
@@ -784,7 +889,7 @@ class DebugSession:
                     self._broadcast({"type": "error", "text": "screenshot: " + first_line})
                 await asyncio.sleep(1.0)
                 continue
-            await asyncio.sleep(0.25)
+            await asyncio.sleep(1.0)
 
     # --- client commands ----------------------------------------------------
 
@@ -818,20 +923,38 @@ class DebugSession:
                 await self._ensure_inject()
                 marks = await self._page.evaluate(MARKS_JS, [int(msg.get("max_normal") or 60)])
                 self._reply(req_id, marks)
-            elif kind == "dom_click":
-                self._reply(req_id, await self._dom_click(msg))
-            elif kind == "dom_fill":
-                placeholder = str(msg.get("placeholder") or "")
-                value = str(msg.get("value") or "")
-                if not placeholder:
-                    self._reply(req_id, None, "dom_fill needs a placeholder")
-                else:
-                    try:
-                        await self._page.get_by_placeholder(placeholder).first.fill(
-                            value, timeout=5000)
-                        self._reply(req_id, {"ok": True})
-                    except Exception as exc:  # noqa: BLE001
-                        self._reply(req_id, None, f"{placeholder}: {exc}".split("\n")[0])
+            elif kind in ("dom_click", "dom_fill"):
+                # The dom_* input verbs only ever arrive from a remote driver
+                # (PanelClient — the human's own input comes in as mouse_*/key),
+                # so they are the exact "an agent is at the wheel" signal. The
+                # panel turns these markers into its agent cursor; the end
+                # marker carries the click point when there is one, and goes
+                # out even when the action blows up (finally), or the cursor
+                # would stay on screen forever.
+                self._broadcast({"type": "agent_cursor", "phase": "start", "action": kind})
+                result = None
+                try:
+                    if kind == "dom_click":
+                        result = await self._dom_click(msg)
+                        self._reply(req_id, result)
+                    else:
+                        placeholder = str(msg.get("placeholder") or "")
+                        value = str(msg.get("value") or "")
+                        if not placeholder:
+                            self._reply(req_id, None, "dom_fill needs a placeholder")
+                        else:
+                            try:
+                                await self._page.get_by_placeholder(placeholder).first.fill(
+                                    value, timeout=5000)
+                                self._reply(req_id, {"ok": True})
+                            except Exception as exc:  # noqa: BLE001
+                                self._reply(req_id, None, f"{placeholder}: {exc}".split("\n")[0])
+                finally:
+                    end = {"type": "agent_cursor", "phase": "end"}
+                    if kind == "dom_click" and isinstance(result, dict) and result.get("clicked"):
+                        end["x"] = result.get("x")
+                        end["y"] = result.get("y")
+                    self._broadcast(end)
             elif kind == "dom_wait_text":
                 found = False
                 try:
@@ -1037,12 +1160,21 @@ class DebugSession:
                     #
                     # It rides the socket as a data URI because the panel
                     # already renders frames that way — one image definition,
-                    # two consumers — and the file copy in `.screenshot/` is
-                    # what a report can point at afterwards.
+                    # two consumers — and the file copy in `.vco-runtime/shots/`
+                    # is what a report can point at afterwards.
                     shot = await self._lock_screenshot(sel)
                     if shot:
                         desc["shotPath"] = shot["path"]
-                        desc["shot"] = shot["png"]
+                        desc["shot"] = shot["jpeg"]
+                    # A crop of the element itself: "which one" is answered
+                    # faster by a picture of the element than by a full
+                    # viewport the reader has to search.
+                    clip = await self._clip_screenshot(desc, shot, sel)
+                    if clip:
+                        desc["clipPath"] = clip["path"]
+                        desc["clip"] = clip["jpeg"]
+                    if (desc.get("tag") or "") == "img" and desc.get("currentSrc"):
+                        desc["imgSrc"] = desc["currentSrc"]
                     if sel in self.annotations:
                         desc["annotation"] = self.annotations[sel]
                     merged = False
@@ -1079,11 +1211,31 @@ class DebugSession:
                 sel = msg.get("selector") or ""
                 shot = await self._lock_screenshot(sel or "pick")
                 if shot:
+                    # Re-describe the element so the crop follows the element,
+                    # not the stale rectangle from lock time.
+                    fresh = None
+                    try:
+                        await self._ensure_inject()
+                        fresh = await self._page.evaluate(
+                            "(s) => window.__vcoDebug && window.__vcoDebug.describeSelector(s) || null",
+                            sel,
+                        )
+                    except Exception:  # noqa: BLE001
+                        fresh = None
                     for item in self.last_picks:
                         if (item.get("selector") or "") == sel:
                             item["shotPath"] = shot["path"]
-                            item["shot"] = shot["png"]
+                            item["shot"] = shot["jpeg"]
                             item["shotAt"] = int(time.time() * 1000)
+                            if fresh:
+                                if fresh.get("rect"):
+                                    item["rect"] = fresh["rect"]
+                                if (fresh.get("tag") or "") == "img" and fresh.get("currentSrc"):
+                                    item["imgSrc"] = fresh["currentSrc"]
+                            clip = await self._clip_screenshot(item, shot, sel or "pick")
+                            if clip:
+                                item["clipPath"] = clip["path"]
+                                item["clip"] = clip["jpeg"]
                     self._broadcast({
                         "type": "pick", "picks": list(self.last_picks), "payload": None,
                     })
@@ -1289,24 +1441,19 @@ def make_handler(session: DebugSession, *, api_key: str | None = None):
             with session.ws_lock:
                 session.ws_clients.append((self, send_lock, sock))
             # After the new client is registered, push the current page
-            # state and force a fresh screenshot so the panel has
-            # something to show. Reset the dedup digest so the next
-            # screenshot loop iteration will send a frame.
+            # state and one fresh frame so the panel has something to show
+            # without waiting for the screencast's next repaint.
             if session.loop and session._page and not session._page.is_closed():
                 async def _hello():
                     try:
                         title = await session._page.title()
                         url = session._page.url
-                        # Reset dedup so the next screenshot is broadcast
-                        # to this newly-registered client.
-                        session._last_digest = b""
-                        png = await session._page.screenshot(type="png", full_page=False)
-                        import hashlib as _hl
-                        session._last_digest = _hl.md5(png).digest()
+                        jpeg = await session._page.screenshot(
+                            type="jpeg", quality=75, full_page=False)
                         session._broadcast({"type": "navigated", "url": url, "title": title})
                         session._broadcast({
                             "type": "frame",
-                            "png": base64.b64encode(png).decode("ascii"),
+                            "jpeg": base64.b64encode(jpeg).decode("ascii"),
                         })
                     except Exception:  # noqa: BLE001
                         pass

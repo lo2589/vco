@@ -12,6 +12,16 @@ Two channels, deterministic-first, vision models only as fallback:
 
 ![vco architecture](assets/vco-architecture.png)
 
+## Promo video
+
+[![vco promo teaser](assets/vco-promo.gif)](assets/vco-promo.mp4)
+
+66 s cut, 2560×1440, with soundtrack: [`assets/vco-promo.mp4`](assets/vco-promo.mp4). It opens with the problem, not the product — an LLM that can write code and reason but cannot click a button — and lets vco enter as the answer. Then: the web channel (`webtext`/`webclick` — the aria tree and result JSON in the video are real command output), the desktop channel (OCR-first locate + grid zoom, real benchmark artifacts), the `run` loop and its safety design, the architecture, the live `vco debug` panel (a real screenshot of it running), benchmark numbers, `webdebug`, the MCP/skill ecosystem, and installation. Rendered frame-by-frame from `promo/index.html` (a deterministic per-frame timeline — every pixel is a pure function of the frame number) by `promo/render.py`, with a procedural, royalty-free soundtrack from `promo/music.py`. After editing the page, regenerate with `python promo/render.py`.
+
+<!-- GitHub renders <video> inline only from user-attachments URLs: drag assets/vco-promo.mp4
+     into any issue or PR comment box, copy the uploaded URL, then replace the GIF above with
+     <video src="https://github.com/user-attachments/assets/…" width="100%"></video> -->
+
 ## Commands
 
 stdout is always JSON. Artifacts go to `.screenshot/` under the **current working directory** (whichever project you run it from).
@@ -84,7 +94,26 @@ vco fill --field "Username=alice" --field "Password=secret" --target "Sign in"
                                   # fill multiple fields, then click the submit button; use --paste for CJK
 vco ask [image] --provider ollama --model minicpm-v4.6:latest
                                   # ask a vision model "what's in this image"; captures the screen if no image
+vco board --write "点击 保存按钮"
+                                  # translucent text overlay narrating each action (for screencasts)
+vco float                         # translucent overlay showing each step's screenshot, with a
+                                  # scrollable step list underneath; click a row to review that step
+vco float --source .screenshot    # watch an artifact dir: every new step-*.grid.png becomes a step
+                                  # (runs in the foreground until Ctrl-C; pair with a `vco run` in another shell)
+vco float --push '{"title":"find","image":"/tmp/marked.png"}'
+                                  # push one step by hand and start the overlay if needed
+vco clean                         # dry-run: report old screenshots under .screenshot/
+vco clean --execute               # actually delete them (newest 20 runs and last 7 days survive;
+                                  # --keep-days / --keep-runs 0 disables either rule)
 ```
+
+`vco float` vs `vco board`: the board narrates one **line of text** per action; `float` keeps the
+**image** and adds history — a large frame on top (the grid the model saw, with the hit marker)
+and every step below it. Clicking an older row pins the image there and pauses following; the
+newest step stops stealing the view until you click the last row again. The overlay is only a
+viewer: it never drives the mouse. It needs a Python with PyObjC (AppKit); when vco itself runs
+under one that lacks it, it automatically starts the helper under an interpreter that has it
+(the system python does) and reports `"float": "unavailable"` if none does.
 
 Recommended desktop workflow (every step verifiable):
 

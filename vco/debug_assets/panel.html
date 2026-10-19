@@ -47,131 +47,50 @@
   .marker.stale { border-style: dashed; border-color: #9ca3af; background: none; }
   #right { border-left: 1px solid #d1d1d6; background: #fff; overflow-y: auto;
            padding: 10px; display: flex; flex-direction: column; gap: 9px; }
-  /* The detail block for a locked element is the top of the sidebar and stays
-     there while the rest scrolls under it (sticky, not scrolled-to): a fresh
-     pick is immediately readable and its insert buttons never leave reach. */
-  #detail-host { position: sticky; top: -10px; z-index: 6; margin: -10px -10px 0;
-                 padding: 10px 10px 8px; background: #fff;
-                 border-bottom: 1px solid #e5e7eb; }
   #hover-line { font: 10.5px/1.4 ui-monospace, monospace; color: #9ca3af;
-                min-height: 13px; margin-bottom: 4px; word-break: break-all; }
-  #detail-card:empty { display: none; }
-  .fcard { border: 1px solid #c7d2fe; border-left: 3px solid #2563eb;
-           border-radius: 6px; background: #f8faff; padding: 7px 9px 8px; }
-  .fcard-head { display: flex; gap: 6px; align-items: baseline;
-                font: 12px/1.4 ui-monospace, monospace; color: #111827; }
-  .fcard-head .grow { flex: 1; min-width: 0; word-break: break-all; }
-  .fcard-head button { border: 0; background: none; color: #6b7280;
-                       cursor: pointer; font-size: 14px; line-height: 1;
-                       padding: 0 2px; }
-  .fcard-head button:hover { color: #ef4444; background: none; }
-  /* The node list under the selected element: one row each, click to select.
-     This is what turns the block into a chooser instead of a copy of the newest
-     card. Scrolls on its own so a long stack never pushes the verbs away. */
-  .fcard-list { margin-top: 5px; display: flex; flex-direction: column;
-                gap: 2px; max-height: 108px; overflow-y: auto;
-                border-top: 1px solid #e5e7eb; padding-top: 4px; }
-  .fcard-node { display: flex; align-items: center; gap: 4px; width: 100%;
-                text-align: left; border: 1px solid transparent;
-                background: none; border-radius: 4px; cursor: pointer;
-                padding: 2px 4px; font: 10.5px/1.5 ui-monospace, monospace;
-                color: #6b7280; }
-  .fcard-node .txt { flex: 1; min-width: 0; overflow: hidden;
-                     text-overflow: ellipsis; white-space: nowrap; }
-  .fcard-node:hover { background: #f3f4f6; }
-  .fcard-node.on { border-color: #93c5fd; background: #eff6ff; color: #1d4ed8; }
-  .fcard-node.clear { color: #b91c1c; justify-content: center;
-                      border-color: #fecaca; }
-  .fcard-sel { color: #1d4ed8; font: 11px/1.45 ui-monospace, monospace;
-               word-break: break-all; margin-top: 3px; }
-  .fcard-meta { color: #6b7280; font: 10.5px/1.45 ui-monospace, monospace;
-                word-break: break-all; margin-top: 2px; }
-  .fcard-html { color: #4b5563; font: 10.5px/1.45 ui-monospace, monospace;
-                background: #eef2ff; border-radius: 4px; padding: 3px 5px;
-                margin-top: 4px; max-height: 46px; overflow: hidden;
-                white-space: pre-wrap; word-break: break-all; }
-  .fcard input.anno { margin-top: 5px; background: #fffbeb; }
-  /* The shot of the page as it was when this element was locked. Capped, so a
-     full-page capture cannot push the verbs out of the sticky block; clicking
-     opens it full size. */
-  .fcard-shot { margin-top: 5px; border: 1px solid #e5e7eb; border-radius: 4px;
-                overflow: hidden; background: #f9fafb; max-height: 150px; }
-  .fcard-shot img { display: block; width: 100%; height: auto; cursor: zoom-in; }
-  .fcard-acts { display: grid; grid-template-columns: 1fr 1fr; gap: 4px;
-                margin-top: 5px; }
-  .fcard-acts button { padding: 3px 6px; font-size: 11px; }
-  .fcard-acts button.wide { grid-column: 1 / -1; }
-  /* Two wide controls share one row instead of each taking a line of its own. */
-  .fcard-acts button.half { grid-column: auto; }
-  /* Destructive, so it does not look like the four insert verbs above it. */
-  .fcard-acts button.danger { color: #b91c1c; border-color: #fecaca;
-                              background: #fff; }
-  .fcard-acts button.danger:hover { background: #fef2f2; border-color: #fca5a5; }
-  #detail-status { font: 10.5px/1.4 -apple-system; color: #6b7280;
-                   min-height: 13px; margin-top: 3px; }
-  #detail-status.ok { color: #15803d; }
-  .sect { border-top: 1px solid #f0f0f2; padding-top: 7px; }
+                min-height: 13px; word-break: break-all; }
   .sec-row { display: flex; gap: 6px; align-items: center; }
   .sec-row > strong { font: 11px/1.4 -apple-system; color: #6b7280;
                       font-weight: 600; text-transform: uppercase;
                       letter-spacing: 0.04em; flex: 1; }
   .sec-row .count { color: #2563eb; font-weight: 600; }
-  details > summary { font: 11px/1.5 -apple-system; color: #6b7280;
-                      cursor: pointer; text-transform: uppercase;
-                      letter-spacing: 0.04em; font-weight: 600; }
-  details > summary::marker { color: #9ca3af; }
-  details[open] > summary { margin-bottom: 5px; }
-  h2 { font-size: 12px; margin: 0 0 4px; color: #6b7280;
-       text-transform: uppercase; letter-spacing: 0.05em; }
-  h2 .hint { font-weight: normal; color: #9ca3af; font-size: 11px;
-             text-transform: none; letter-spacing: 0; }
-  h2 .count { color: #2563eb; }
   .card { border: 1px solid #e5e7eb; border-radius: 6px; padding: 8px 10px;
           background: #fafafa; }
-  .card pre { margin: 0; white-space: pre-wrap; word-break: break-all;
-              font: 12px/1.5 ui-monospace, monospace; color: #111827; }
-  .row { display: flex; gap: 6px; }
-  .row > * { flex: 1; min-width: 0; }
   input, textarea { width: 100%; font: 12px -apple-system;
                     padding: 4px 6px; border: 1px solid #d1d1d6;
                     border-radius: 4px; background: #fff; }
-  textarea { min-height: 70px; resize: vertical; }
   button { padding: 5px 10px; border: 1px solid #d1d1d6; background: #fff;
            border-radius: 4px; cursor: pointer; font: 12px -apple-system; }
-  button.primary { background: #2563eb; color: #fff; border-color: #2563eb; }
   button:hover { background: #f3f4f6; }
-  button.primary:hover { background: #1d4ed8; }
   button.link { border: 0; background: none; color: #2563eb; padding: 2px 4px; }
   button.link:hover { text-decoration: underline; background: none; }
-  #hover-selector { color: #374151; font: 11px/1.5 ui-monospace, monospace;
-                    min-height: 14px; word-break: break-all; }
-  #hover-rect { color: #9ca3af; font: 11px ui-monospace, monospace; }
-  #export-status { font: 11px; color: #6b7280; min-height: 14px; margin-top: 4px; }
-  #report-preview { margin: 0; white-space: pre-wrap; word-break: break-word;
-                    font: 11px/1.5 ui-monospace, monospace; color: #111827; }
+  .fcard-meta { color: #6b7280; font: 10.5px/1.45 ui-monospace, monospace;
+                word-break: break-all; }
   .pick-card { position: relative; border: 1px solid #d1d5db;
                border-radius: 6px; background: #fff; padding: 8px 10px 10px;
                margin-bottom: 8px; }
   .pick-card.hot { border-color: #2563eb; box-shadow: 0 0 0 2px #dbeafe; }
-  .pick-card .pick-close { position: absolute; top: 5px; right: 6px;
-                           border: 0; background: transparent; color: #6b7280;
+  /* The × floats over the screenshot (which leads the card), so it needs its
+     own backdrop to stay visible against arbitrary page content. */
+  .pick-card .pick-close { position: absolute; top: 10px; right: 12px; z-index: 2;
+                           border: 0; border-radius: 4px;
+                           background: rgba(255, 255, 255, 0.88); color: #6b7280;
                            cursor: pointer; font-size: 14px; line-height: 1;
-                           padding: 0 2px; }
+                           padding: 2px 5px; }
   .pick-card .pick-close:hover { color: #ef4444; }
-  .pick-card .pick-head { font: 12px/1.45 ui-monospace, monospace;
-                          color: #111827; margin-right: 22px; }
-  .pick-card .pick-id { color: #3730a3; }
+  /* The element's own screenshot leads the card: it is the card's identity.
+     Edge-to-edge so it reads as a picture, not a thumbnail. */
+  .pick-card .pick-shot { margin: -8px -10px 6px; overflow: hidden;
+                          border-bottom: 1px solid #e5e7eb;
+                          border-radius: 6px 6px 0 0; background: #f9fafb; }
+  .pick-card .pick-shot img { display: block; width: 100%; height: auto;
+                              cursor: zoom-in; }
+  .pick-card .pick-sel { color: #1d4ed8; font: 11px/1.45 ui-monospace, monospace;
+                         word-break: break-all; }
   .pick-card .pick-num { display: inline-block; min-width: 16px;
                          background: #f97316; color: #fff; border-radius: 3px;
                          text-align: center; font-size: 10px; padding: 0 3px;
                          margin-right: 4px; }
-  .pick-card .pick-sel { color: #1d4ed8; word-break: break-all; }
-  .pick-card .pick-meta { color: #6b7280; font: 11px/1.5 -apple-system;
-                          margin-top: 3px; }
-  .pick-card .pick-html { color: #4b5563; font: 11px/1.45 ui-monospace, monospace;
-                          background: #f3f4f6; border-radius: 4px; padding: 4px 6px;
-                          margin-top: 4px; max-height: 84px; overflow: auto;
-                          white-space: pre-wrap; word-break: break-all; }
   .pick-card textarea { width: 100%; min-height: 44px; margin-top: 6px;
                         font: 12px -apple-system; padding: 4px 6px;
                         border: 1px solid #d1d1d6; border-radius: 4px;
@@ -183,31 +102,12 @@
                                  color: #fff; cursor: pointer; font: 11px -apple-system; }
   .pick-card .pick-acts button:hover { background: #1d4ed8; }
   .pick-card .pick-status { color: #16a34a; font: 11px -apple-system; }
-  #errors { max-height: 100px; overflow-y: auto; }
-  #runs { font: 11px ui-monospace, monospace; padding: 3px 4px;
-          border: 1px solid #d1d1d6; border-radius: 4px; background: #fff; }
-  .run-event { display: flex; gap: 6px; align-items: flex-start;
-               padding: 3px 0; border-bottom: 1px solid #f3f4f6;
-               font: 11px/1.45 ui-monospace, monospace; }
-  .run-event .t { color: #9ca3af; flex: 0 0 auto; }
-  .run-event .k { flex: 0 0 auto; padding: 0 4px; border-radius: 3px;
-                  background: #e0e7ff; color: #3730a3; }
-  .run-event .s { flex: 1; min-width: 0; word-break: break-word; }
-  .run-event.err .k { background: #fee2e2; color: #991b1b; }
-  .run-event .thumb { height: 34px; border: 1px solid #d1d5db; border-radius: 3px;
-                      cursor: zoom-in; flex: 0 0 auto; }
-  #run-preview img { max-width: 100%; border: 1px solid #d1d5db; border-radius: 4px; }
-  #errors .err { color: #b91c1c; font: 11px ui-monospace; padding: 1px 0;
-                 border-bottom: 1px solid #fee2e2; }
   #picks-empty { color: #9ca3af; font-size: 12px; }
-  kbd { background: #f3f4f6; border: 1px solid #d1d5db; border-bottom-width: 2px;
-        border-radius: 3px; padding: 0 4px; font: 11px ui-monospace, monospace; }
   /* A dead socket used to be invisible: the old screenshot stayed on screen and
      every click was dropped without a word. Now it says so. */
   #link-banner { display: none; padding: 6px 10px; background: #7f1d1d; color: #fee2e2;
                  font: 12px -apple-system; border-bottom: 1px solid #991b1b; }
   #link-banner.on { display: block; }
-  #diag { color: #6b7280; font: 10px ui-monospace, monospace; word-break: break-all; }
 </style>
 </head>
 <body>
@@ -232,15 +132,11 @@
   </div>
 </div>
 <div id="right">
-  <!-- Sticky top: what is under the cursor, and the detail block of the
-       element locked most recently. -->
-  <div id="detail-host">
-    <div id="hover-line"></div>
-    <div id="detail-card"></div>
-  </div>
-
+  <!-- The sidebar is deliberately thin: what is under the cursor, which page
+       the controlled browser is on, and the pick cards. -->
   <div class="card" style="padding:5px 8px">
     <div id="target-url" class="fcard-meta" style="margin:0">—</div>
+    <div id="hover-line"></div>
   </div>
 
   <div>
@@ -250,45 +146,6 @@
     </div>
     <div id="picks-stack"></div>
   </div>
-
-  <div class="sect">
-    <div id="type-status" class="fcard-meta" style="min-height:13px"></div>
-  </div>
-
-  <details class="sect">
-    <summary>控制台 <span class="count" id="err-count">0</span></summary>
-    <div class="card"><div id="errors"></div>
-      <div class="row" style="margin-top:4px"><button id="btn-clear-errors">清空</button></div>
-    </div>
-  </details>
-
-  <details class="sect">
-    <summary>运行记录</summary>
-    <div class="row">
-      <select id="runs" style="flex:1"></select>
-      <button id="btn-runs-refresh" style="flex:0 0 auto">刷新</button>
-    </div>
-    <div id="run-events" class="card" style="margin-top:6px;max-height:220px;overflow:auto"></div>
-    <div id="run-preview" style="margin-top:6px"></div>
-  </details>
-
-  <details class="sect">
-    <summary>导出</summary>
-    <div class="row">
-      <button id="btn-copy-report" class="primary" style="flex:0 0 auto">复制报告</button>
-      <button id="btn-download-report" style="flex:0 0 auto">.md</button>
-      <button id="btn-download-shot" style="flex:0 0 auto">标注截图</button>
-    </div>
-    <div id="export-status" class="fcard-meta" style="min-height:13px"></div>
-    <div class="card" style="margin-top:6px">
-      <pre id="report-preview" style="max-height:220px;overflow:auto"></pre>
-    </div>
-  </details>
-
-  <details class="sect">
-    <summary>诊断</summary>
-    <div class="card"><div id="diag">…</div></div>
-  </details>
 </div>
 <script src="/static/panel.js"></script>
 <textarea id="clip-helper" aria-hidden="true"

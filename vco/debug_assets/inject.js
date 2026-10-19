@@ -138,6 +138,10 @@
       outerHTML: outer.slice(0, 600),
       htmlLen: outer.length,
       childCount: el.children ? el.children.length : 0,
+      // currentSrc (not attrs.src): it is the URL the element actually
+      // resolved after srcset/sizes, which is the one a reference-image
+      // workflow wants to hand to a model.
+      currentSrc: el.tagName === "IMG" ? (el.currentSrc || el.src || "") : "",
       depth: (function () {
         let d = 0, c = el;
         while (c && c.parentElement) { d++; c = c.parentElement; }

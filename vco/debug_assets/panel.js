@@ -3,9 +3,15 @@
 // Interaction contract (this is the whole point of the panel):
 //   plain click        → forwarded to the page: buttons fire, links navigate
 //   ⌘/Ctrl/Alt + click → locks the element under the cursor; the right sidebar
-//                        gains a card holding its DOM + an annotation box
+//                        gains an image-first card: the element's screenshot,
+//                        an annotation box, and 插入图片 / 插入HTML
 //   …clicking more elements keeps ADDING cards (nothing is replaced)
 //   ×                  → drops that one card
+//
+// The sidebar is deliberately thin: a hover readout, the current page URL, and
+// the card stack. Reports, console logs, run timelines and diagnostics used to
+// live here too; they were removed because the panel's product is the pick
+// card, not a dashboard.
 (function () {
   const $ = (id) => document.getElementById(id);
   const FRAME = $("frame");
@@ -14,65 +20,35 @@
   const MASK = $("mask");
   const OVERLAY = $("overlay");
   const URL_BAR = $("url");
-  const ERRORS = $("errors");
 
   let picks = [];            // canonical selection, owned by the server
-  const liveErrors = [];      // console/pageerror lines, newest first
   // selector -> the user's note. The panel owns this text: the server copy only
-  // ever arrives *after* a round trip, so building the report from `picks`
-  // alone silently dropped a note typed moments earlier (and any re-broadcast
-  // arriving mid-typing wiped it from the report).
+  // ever arrives *after* a round trip, so a re-broadcast arriving mid-typing
+  // must not wipe a note typed moments earlier.
   const annotations = {};
   const pendingAnnotations = {};
   let annotateTimer = null;
   let hotKey = null;         // card ↔ marker highlight link
-  let pageContext = { url: "", title: "", consoleErrors: [], failedRequests: [] };
+  let pageContext = { url: "", title: "" };
+  // Where the operator's pointer is, in page coordinates — the agent cursor
+  // appears here when an action starts, since the action's own coordinates
+  // only exist once it finishes.
+  let lastPointerPage = null;
   const keyOf = (p) => (p && p.selector) || "";
 
   // --- websocket ---------------------------------------------------------
   // The panel is useless the moment the socket dies, and a dead socket used to
   // be silent: the last screenshot stayed on screen and every click vanished.
-  // So: reconnect automatically, say so on screen, and keep counters of what
-  // this browser actually delivered to us (that is how a "nothing happens"
-  // report gets diagnosed without guessing).
+  // So: reconnect automatically and say so on screen.
   let ws = null;
   let connected = false;
-  const counters = { pointerdown: 0, mousedown: 0, keydown: 0, beforeinput: 0,
-                     pasted: 0, moved: 0, sent: 0, dropped: 0 };
-  const lastMsg = { kind: "-", at: "-" };
 
   function send(obj) {
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify(obj));
-      counters.sent++;
-      lastMsg.kind = obj.type;
-      lastMsg.at = new Date().toLocaleTimeString();
-      renderDiag();
       return true;
     }
-    counters.dropped++;
-    renderDiag();
     return false;
-  }
-
-  function renderDiag() {
-    const el = $("diag");
-    if (!el) return;
-    const editable = MASK.isContentEditable !== undefined
-      ? String(MASK.isContentEditable) : "?";
-    el.textContent = [
-      "socket: " + (connected ? "connected" : "DISCONNECTED"),
-      "editable: " + editable,
-      "pointerdown: " + counters.pointerdown,
-      "mousedown: " + counters.mousedown,
-      "keydown: " + counters.keydown,
-      "beforeinput: " + counters.beforeinput,
-      "paste: " + counters.pasted,
-      "sent: " + counters.sent,
-      "dropped: " + counters.dropped,
-      "last: " + lastMsg.kind + " @ " + lastMsg.at,
-      "ua: " + navigator.userAgent,
-    ].join("\n");
   }
 
   function connect() {
@@ -81,8 +57,6 @@
     ws.addEventListener("open", () => {
       connected = true;
       $("link-banner").className = "";
-      renderDiag();
-      send({ type: "runs_list" });
       send({
         type: "client_info",
         userAgent: navigator.userAgent,
@@ -96,28 +70,20 @@
     ws.addEventListener("close", () => {
       connected = false;
       $("link-banner").className = "on";
-      renderDiag();
       setTimeout(connect, 1200);
     });
-    ws.addEventListener("error", () => { renderDiag(); });
     ws.onmessage = onMessage;
   }
-
-  // Periodic pulse: the server records these, so after a "点了没反应" report we
-  // can tell "this browser never delivered the event" from "the server never
-  // acted on it".
-  setInterval(() => {
-    if (connected) {
-      send({ type: "client_pulse", counters: Object.assign({}, counters),
-             last: lastMsg.kind });
-    }
-  }, 5000);
 
   function onMessage(ev) {
     let msg;
     try { msg = JSON.parse(ev.data); } catch (e) { return; }
     if (msg.type === "frame") {
-      FRAME.src = "data:image/png;base64," + msg.png;
+      // CDP screencast frames are JPEG; the `png` field only ever arrives from
+      // an older server. Accept both so either side can upgrade first.
+      FRAME.src = msg.jpeg
+        ? "data:image/jpeg;base64," + msg.jpeg
+        : "data:image/png;base64," + msg.png;
       if (!stageFitted) FRAME.decode().then(fitStage).catch(() => {});
     } else if (msg.type === "navigated") {
       URL_BAR.value = msg.url || "";
@@ -129,52 +95,24 @@
       setTimeout(() => send({ type: "measure_picks" }), 350);
     } else if (msg.type === "hover") {
       renderHover(msg.payload);
-    } else if (msg.type === "runs") {
-      renderRuns(msg.items || []);
-    } else if (msg.type === "run_events") {
-      if (msg.path === currentRun) appendRunEvents(msg.events || [], msg.next || 0);
     } else if (msg.type === "selection") {
       copyFromPage(msg.text || "");
-    } else if (msg.type === "console") {
-      pushError(msg.level + ": " + msg.text);
-    } else if (msg.type === "pageerror") {
-      pushError("pageerror: " + msg.text);
     } else if (msg.type === "pick") {
       // Server owns the selection: it accumulates one entry per locked
-      // element and echoes the whole stack after every change.
-      const before = picks.map(keyOf).join("|");
-      const beforeIdx = detailIndex >= 0 && picks[detailIndex]
-        ? keyOf(picks[detailIndex]) : "";
+      // element and echoes the whole stack after every change — including a
+      // re-lock of an already-picked element, which arrives with FRESH
+      // shot/clip images and must simply re-render (the old detail block only
+      // re-rendered when the key set changed, which is why a re-pick looked
+      // like it kept the first screenshot forever).
       picks = Array.isArray(msg.picks) ? msg.picks : [];
       picks.forEach((p) => {
         const k = keyOf(p);
         if (annotations[k] !== undefined) p.annotation = annotations[k];
       });
-      // A fresh lock is the whole point of the detail block, so show it; a
-      // removal just keeps the block pointing at the same element when that
-      // element is still locked, and falls back to the newest one when it is
-      // the element that just went away.
-      if (picks.map(keyOf).join("|") !== before) {
-        const stillThere = picks.findIndex((p) => keyOf(p) === beforeIdx);
-        if (stillThere >= 0) {
-          detailIndex = stillThere;
-          renderDetail();
-        } else {
-          focusNewestPick();
-        }
-      }
       renderPicks();
       renderMarkers();
-      refreshReport();
-    } else if (msg.type === "error") {
-      pushError("server: " + msg.text);
-    } else if (msg.type === "context") {
-      if (msg.payload) {
-        pageContext = Object.assign({}, pageContext, msg.payload);
-        refreshReport();
-      }
-    } else if (msg.type === "closed") {
-      pushError("connection closed");
+    } else if (msg.type === "agent_cursor") {
+      showAgentCursor(msg);
     }
   }
 
@@ -183,19 +121,6 @@
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden && connected) send({ type: "measure_picks" });
   });
-
-  function pushError(text) {
-    liveErrors.push(text);
-    while (liveErrors.length > 50) liveErrors.shift();
-    refreshReport();
-    const div = document.createElement("div");
-    div.className = "err";
-    div.textContent = text;
-    ERRORS.prepend(div);
-    while (ERRORS.children.length > 30) ERRORS.removeChild(ERRORS.lastChild);
-    const count = $("err-count");
-    if (count) count.textContent = String(liveErrors.length);
-  }
 
   // --- viewport geometry --------------------------------------------------
   // The controlled browser has a fixed viewport; the screenshot is always that
@@ -262,6 +187,61 @@
     });
   }
 
+  // --- agent cursor ---------------------------------------------------------
+  // dom_* verbs are how a remote driver (PanelClient) acts on the page, so the
+  // server brackets each one with agent_cursor start/end markers. The panel
+  // turns that into a fake cursor: the human needs to see "this movement is
+  // the agent's", the same question the desktop channel answers with its
+  // floating badge. One element, reused across a burst of actions — a queue
+  // of them would just smear.
+  let agentCursorEl = null;
+  let agentCursorTimer = null;
+
+  function ensureAgentCursor() {
+    if (agentCursorEl) return agentCursorEl;
+    const el = document.createElement("div");
+    // Sits on the stage (not the overlay: renderMarkers clears that), in the
+    // same page→panel coordinate space the pick markers use.
+    el.style.cssText = "position:absolute;pointer-events:none;z-index:60;"
+      + "display:flex;align-items:flex-start;opacity:0;transition:opacity 350ms;";
+    el.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" style="flex:none">'
+      + '<path d="M4 2 L20 12 L12 14 L9 22 Z" fill="#f97316" stroke="#fff" stroke-width="1.5"/></svg>'
+      + '<span style="background:#f97316;color:#fff;font:10px/1.5 ui-monospace,monospace;'
+      + 'padding:0 4px;border-radius:3px;margin:14px 0 0 -4px"></span>';
+    STAGE.appendChild(el);
+    agentCursorEl = el;
+    return el;
+  }
+
+  function moveAgentCursor(el, x, y) {
+    const box = MASK.getBoundingClientRect();
+    const { w, h } = frameSize();
+    if (!box.width) return;
+    el.style.left = (x * box.width / w) + "px";
+    el.style.top = (y * box.height / h) + "px";
+  }
+
+  function showAgentCursor(msg) {
+    if (agentCursorTimer) { clearTimeout(agentCursorTimer); agentCursorTimer = null; }
+    const el = ensureAgentCursor();
+    const label = el.querySelector("span");
+    if (msg.phase === "start") {
+      if (label) label.textContent = msg.action || "agent";
+      const at = lastPointerPage || { x: frameSize().w / 2, y: frameSize().h / 2 };
+      moveAgentCursor(el, at.x, at.y);
+      el.style.opacity = "1";
+      return;
+    }
+    // end: land the cursor on the clicked point (when the action had one),
+    // linger a beat so the eye catches where it acted, then fade out.
+    if (msg.x != null && msg.y != null) moveAgentCursor(el, msg.x, msg.y);
+    el.style.opacity = "1";
+    agentCursorTimer = setTimeout(() => {
+      el.style.opacity = "0";
+      agentCursorTimer = null;
+    }, 800);
+  }
+
   function renderHover(desc) {
     const el = $("hover-line");
     if (!el) return;
@@ -310,12 +290,13 @@
   }
 
   MASK.addEventListener("pointermove", (e) => {
-    counters.moved++;
     const p = clientToPage(e);
-    if (p) send({ type: "mouse_move", x: p.x, y: p.y });
+    if (p) {
+      lastPointerPage = p;
+      send({ type: "mouse_move", x: p.x, y: p.y });
+    }
   });
   MASK.addEventListener("pointerdown", (e) => {
-    counters.pointerdown++;
     lastPointerAt = Date.now();
     const p = clientToPage(e);
     if (!p) return;
@@ -330,7 +311,6 @@
   MASK.addEventListener("pointerleave", () => { selecting = false; dragStart = null; });
   // Fallback (only if pointer events did not already handle this gesture).
   MASK.addEventListener("mousedown", (e) => {
-    counters.mousedown++;
     if (Date.now() - lastPointerAt < 600) return;
     const p = clientToPage(e);
     if (!p) return;
@@ -418,19 +398,14 @@
   }
 
   MASK.addEventListener("compositionstart", () => { composing = true; });
-  MASK.addEventListener("compositionupdate", (e) => {
-    $("type-status").textContent = "输入中：" + (e.data || "");
-  });
   MASK.addEventListener("compositionend", (e) => {
     composing = false;
     const text = e.data || MASK.textContent || "";
     MASK.textContent = "";
-    $("type-status").textContent = "";
     if (text) sendText(text, "ime");
   });
   // Text the browser actually inserted into the mask (typing, IME leftovers).
   MASK.addEventListener("beforeinput", (e) => {
-    counters.beforeinput++;
     const type = e.inputType || "";
     if (type === "insertCompositionText") return;   // IME composes in the mask
     if (type.startsWith("insert")) {
@@ -456,13 +431,11 @@
     sendText(text, "input");
   });
   MASK.addEventListener("paste", (e) => {
-    counters.pasted++;
     e.preventDefault();
     const text = (e.clipboardData && e.clipboardData.getData("text/plain")) || "";
     if (text) {
       lastPasteAt = Date.now();
       sendText(text, "paste");
-      $("type-status").textContent = "已粘贴 " + text.length + " 字";
     }
   });
   MASK.addEventListener("copy", (e) => {
@@ -470,8 +443,6 @@
     send({ type: "copy_selection" });
   });
   MASK.addEventListener("keydown", (e) => {
-    counters.keydown++;
-    renderDiag();
     if (document.activeElement && document.activeElement !== MASK) return;
     if (Object.prototype.hasOwnProperty.call(MODIFIERS, e.key)) return;
     if (isPasteKey(e)) {
@@ -482,10 +453,7 @@
         if (Date.now() - lastPasteAt < 600) return;
         if (navigator.clipboard && navigator.clipboard.readText) {
           navigator.clipboard.readText().then((text) => {
-            if (text) {
-              sendText(text, "clipboard");
-              $("type-status").textContent = "已粘贴 " + text.length + " 字";
-            }
+            if (text) sendText(text, "clipboard");
           }).catch(() => {});
         }
       }, 0);
@@ -503,54 +471,21 @@
   // ⌘C in the viewport: the page's selection is not on this side of the wire,
   // so ask the server for it and put it on the real clipboard.
   function copyFromPage(text) {
-    if (!text) {
-      $("type-status").textContent = "页面里没有选中内容";
-      return;
-    }
+    if (!text) return;
     const helper = $("clip-helper");
     helper.value = text;
     helper.select();
     let ok = false;
     try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
     if (!ok && navigator.clipboard) {
-      navigator.clipboard.writeText(text).then(
-        () => { $("type-status").textContent = "已复制 " + text.length + " 字"; },
-        () => { $("type-status").textContent = "复制失败：" + text.slice(0, 40); });
-      return;
+      navigator.clipboard.writeText(text).catch(() => {});
     }
-    $("type-status").textContent = ok
-      ? "已复制 " + text.length + " 字"
-      : "复制失败：" + text.slice(0, 40);
-  }
-
-  // The 「送入页面文字」 box is gone from the sidebar: a text field plus a send
-  // button next to the picker read as one more thing to fill in, and typing into
-  // the page is what the controlled browser itself is for. The status line stays
-  // (paste/copy feedback reports there); the transport below still works for any
-  // caller that brings its own box.
-  function sendTypedText(text) {
-    const value = String(text === undefined ? "" : text);
-    if (!value) return;
-    // Deliberately NOT through sendText: this is one explicit command from a
-    // caller's own box, not a browser input event, so nothing else can be a
-    // duplicate of it — and deduping it against a paste that just happened
-    // would swallow a send the user actually asked for.
-    send({ type: "insert_text", text: value });
-    const status = $("type-status");
-    if (status) status.textContent = "已发送 " + value.length + " 字到页面";
   }
 
   $("btn-back").onclick = () => send({ type: "back" });
   $("btn-forward").onclick = () => send({ type: "forward" });
   $("btn-reload").onclick = () => send({ type: "reload" });
   $("btn-clear-picks").onclick = () => send({ type: "clear_picks" });
-  $("btn-clear-errors").onclick = () => {
-    ERRORS.textContent = "";
-    liveErrors.length = 0;
-    const count = $("err-count");
-    if (count) count.textContent = "0";
-    refreshReport();
-  };
   URL_BAR.addEventListener("keydown", (e) => {
     if (e.key === "Enter") {
       let v = URL_BAR.value.trim();
@@ -566,58 +501,22 @@
   });
 
   // --- selection cards ----------------------------------------------------
-  // One card per locked element: what was locked (DOM), and a box for the
-  // user's annotation. Cards accumulate; nothing here replaces a previous one.
-  // --- the floating detail block -----------------------------------------
-  // A locked element answers four questions — which one, how to reach it, what
-  // it says, and who owns it — and then offers to hand that answer to whoever
-  // is looking at this panel. It is rendered as the sticky top of the sidebar
-  // so a fresh pick is readable without scrolling and its buttons never leave
-  // reach, and it always describes the pick that just happened.
-  // Standing down: the report builder already turns the whole stack into
-  // Markdown; this block is the one-click path for the element in hand.
-  let detailIndex = -1;        // index into picks, or -1 when nothing is locked
-  let detailNote = "";         // the note typed in this block
-  let statusTimer = null;
+  // One card per locked element, image first: the element's own screenshot is
+  // the identity of the card (a selector is how the *machine* finds it again).
+  // Cards accumulate; nothing here replaces a previous one — except re-locking
+  // the same element, which refreshes its card in place (see the pick handler).
 
-  function detailButtons(pick, index) {
-    const text = (pick.text || "").trim();
-    const html = (pick.outerHTML || "").trim();
-    return [
-      ["选择器", pick.selector || "", "selector"],
-      ["HTML", html, "html"],
-      ["文字", text, "text"],
-    ].map(([label, value, kind]) => ({
-      label, kind, value,
-      title: value ? value.slice(0, 90) : "(空)",
-      disabled: !value,
-    })).concat([
-      {
-        label: "全部信息", kind: "info", value: "",
-        title: "页面 + 位置 + 选择器 + 文字 + HTML + 归属 + 截图路径",
-        disabled: false, index,
-      },
-      {
-        label: "截图路径", kind: "shot", value: pick.shotPath || "",
-        title: pick.shotPath ? pick.shotPath : "还没有截图",
-        disabled: !pick.shotPath,
-      },
-    ]);
-  }
-
-  // One compact line of Markdown-ish text, which is what both the panel's own
-  // report and the chat composer render well.
-  //
-  // What a locked element has to answer, in the order a reader needs it:
-  // WHERE the page is, WHERE on the page it sits, WHICH element it is, what it
-  // says, and its markup. Selector + text + HTML alone left out the first two,
-  // which is exactly the pair that makes a report actionable — the same
-  // `div.stat` exists on every page of a site.
+  // What a locked element has to answer when it is handed to a chat composer,
+  // in the order a reader needs it: WHERE the page is, WHICH element it is,
+  // and the pictures of it as files the reader (or a model on the other side)
+  // can open. Selector alone left out the first and last, which is exactly
+  // the pair that makes a report actionable.
   function detailBlock(pick, noteOverride) {
     const lines = [];
-    // noteOverride lets a stack card build ITS OWN block (its own annotation)
-    // instead of borrowing whatever is typed in the selected-element block.
-    const note = (noteOverride !== undefined ? noteOverride : detailNote || "").trim();
+    // noteOverride lets a stack card build ITS OWN block (its own annotation).
+    const note = (noteOverride !== undefined
+      ? noteOverride
+      : (pick.annotation || "")).trim();
     if (note) lines.push(note);
 
     // The page is the pick's OWN page, stamped when it was locked, so a pick
@@ -634,20 +533,14 @@
     const path = pick.path && pick.path !== sel ? "  (" + pick.path + ")" : "";
     lines.push("- DOM: `" + sel + "`" + path);
     if (pick.visible === false || pick.missing) lines.push("- 状态: ⚠ 不可见/已不在页面上");
+    if (pick.imgSrc) lines.push("- 图片: " + pick.imgSrc);
 
-    // The picture of what was locked, as a file the reader can open.
-    if (pick.shotPath) lines.push("- 截图: `" + pick.shotPath + "`");
+    // Absolute paths, last, so the block still reads as prose and hands the
+    // machine its pointers at the end.
+    if (pick.shotPath) lines.push("- 截图: " + pick.shotPath);
+    if (pick.clipPath) lines.push("- 裁剪图: " + pick.clipPath);
 
     return lines.join("\n");
-  }
-
-  function actionPayload(pick, kind) {
-    if (kind === "selector") return pick.selector || "";
-    if (kind === "html") return (pick.outerHTML || "").trim();
-    if (kind === "text") return (pick.text || "").trim();
-    // Just the picture, for when the report is about how it LOOKS.
-    if (kind === "shot") return (pick.shotPath || "").trim();
-    return detailBlock(pick);
   }
 
   // Hand the payload to whoever embedded this panel (dsh's own page, a browser
@@ -656,13 +549,11 @@
   function forwardToHost(kind, text, pick, noteOverride) {
     let delivered = false;
     // The annotation travels as its OWN field, not merely baked into `text`:
-    // the embedder decides where the note lands, and a per-field payload
-    // (选择器 / HTML / 文字) carries no prose of its own to carry it in.
-    // detailNote is what is typed in the box right now; pick.annotation is this
-    // pick's stored note.
+    // the embedder decides where the note lands, and a raw-HTML payload
+    // carries no prose of its own to carry it in.
     const note = (noteOverride !== undefined
       ? noteOverride
-      : (detailNote || (pick && pick.annotation) || "")).trim();
+      : ((pick && pick.annotation) || "")).trim();
     try {
       if (window.parent && window.parent !== window) {
         window.parent.postMessage({
@@ -679,250 +570,26 @@
     return delivered;
   }
 
-  function flashDetail(msg, ok) {
-    const el = $("detail-status");
-    if (!el) return;
-    el.textContent = msg;
-    el.className = ok ? "ok" : "";
-    if (statusTimer) clearTimeout(statusTimer);
-    statusTimer = setTimeout(() => {
-      if (el) { el.textContent = ""; el.className = ""; }
-      statusTimer = null;
-    }, 2600);
-  }
-
   function copyText(text) {
     if (!navigator.clipboard) return Promise.resolve(false);
     return navigator.clipboard.writeText(text).then(() => true, () => false);
   }
 
-  function renderDetail() {
-    const card = $("detail-card");
-    if (!card) return;
-    card.textContent = "";
-    const pick = detailIndex >= 0 ? picks[detailIndex] : null;
-    if (!pick) return;
+  // Sending annotations is debounced; nothing here re-renders on every
+  // keystroke, so the debounce exists purely to keep the server's copy fresh
+  // without one round trip per character.
+  function queueAnnotation(sel, text) {
+    pendingAnnotations[sel] = text;
+    clearTimeout(annotateTimer);
+    annotateTimer = setTimeout(flushAnnotations, 250);
+  }
 
-    const box = document.createElement("div");
-    box.className = "fcard";
-    box.onmouseenter = () => { hotKey = keyOf(pick); renderMarkers(); };
-    box.onmouseleave = () => { hotKey = null; renderMarkers(); };
-
-    const head = document.createElement("div");
-    head.className = "fcard-head";
-    const num = document.createElement("span");
-    num.className = "pick-num";
-    num.textContent = String(detailIndex + 1);
-    const title = document.createElement("span");
-    title.className = "grow";
-    const cls = pick.className
-      ? "." + pick.className.split(/\s+/).filter(Boolean).slice(0, 3).join(".") : "";
-    title.textContent = "<" + (pick.tag || "?") + ">" + (pick.id ? "#" + pick.id : "") + cls;
-    // The header carries only the element's identity. The stack-wide clear now
-    // lives in the node list below, where "every element" is visibly the thing
-    // it acts on, instead of in a header that describes one element.
-
-    head.append(num, title);
-
-    // The selector IS the node's identity, so it stays. The size/role/children
-    // line and the owner line used to repeat what the card below already shows,
-    // which is what made this block look like a duplicate of the stack.
-    const sel = document.createElement("div");
-    sel.className = "fcard-sel";
-    sel.textContent = pick.selector || "(no selector)";
-    if (pick.missing || pick.visible === false) {
-      sel.textContent += "   ⚠ 已不在页面上";
-    }
-
-    box.append(head, sel);
-
-    if (pick.outerHTML) {
-      const html = document.createElement("div");
-      html.className = "fcard-html";
-      html.textContent = pick.outerHTML;
-      html.title = pick.outerHTML;
-      box.appendChild(html);
-    }
-
-    const anno = document.createElement("input");
-    anno.className = "anno";
-    anno.placeholder = "这里怎么了？（例：点了没反应）";
-    if (annotations[detailKey()] === undefined && pick.annotation) {
-      annotations[detailKey()] = pick.annotation;
-    }
-    anno.value = detailNote !== "" ? detailNote
-      : (annotations[detailKey()] !== undefined ? annotations[detailKey()]
-        : (pick.annotation || ""));
-    anno.oninput = (ev) => {
-      detailNote = ev.target.value;
-      const key = detailKey();
-      annotations[key] = detailNote;
-      const item = picks.find((q) => keyOf(q) === key);
-      if (item) item.annotation = detailNote;
-      refreshReport();
-      queueAnnotation(key, detailNote);
-    };
-    anno.onkeydown = (ev) => ev.stopPropagation();
-    box.appendChild(anno);
-
-    // What the page looked like when this was locked. Inline, because the
-    // question "which element do you mean" is answered by a picture far more
-    // reliably than by a selector — and it is the same PNG the report points
-    // at on disk.
-    if (pick.shot) {
-      const fig = document.createElement("div");
-      fig.className = "fcard-shot";
-      const img = document.createElement("img");
-      img.src = "data:image/png;base64," + pick.shot;
-      img.alt = "锁定时的页面截图";
-      img.loading = "lazy";
-      // Click to open full size: the block is a summary, and a full-page shot
-      // is unreadable at summary scale.
-      img.onclick = () => window.open(img.src, "_blank");
-      img.title = pick.shotPath
-        ? "点击看大图（也存于 " + pick.shotPath + "）"
-        : "点击看大图";
-      fig.appendChild(img);
-      box.appendChild(fig);
-    }
-
-    const acts = document.createElement("div");
-    acts.className = "fcard-acts";
-    detailButtons(pick, detailIndex).forEach((spec) => {
-      const b = document.createElement("button");
-      b.textContent = spec.label;
-      b.title = spec.title;
-      b.disabled = spec.disabled;
-      if (spec.kind === "info" || spec.kind === "shot") {
-        b.className = "wide half";
-        b.onclick = () => {
-          if (spec.kind === "shot") {
-            if (!spec.value) return;
-            if (forwardToHost("insert-text", spec.value, pick)) {
-              flashDetail("已把截图路径送进对话输入框", true);
-              return;
-            }
-            copyText(spec.value).then((ok) => flashDetail(
-              ok ? "已复制截图路径" : "复制失败", ok));
-            return;
-          }
-          const payload = detailBlock(pick);
-          if (forwardToHost("info", payload, pick)) {
-            flashDetail("已送到对话：等它在输入框里出现再决定发送", true);
-            return;
-          }
-          copyText(payload).then((ok) => flashDetail(
-            ok ? "没有可插入的页面，已复制全部信息" : "复制失败", ok));
-        };
-        acts.appendChild(b);
-        return;
-      }
-      b.onclick = () => {
-        const payload = actionPayload(pick, spec.kind);
-        if (!payload) return;
-        // Inside dsh the panel pushes into the chat composer; on its own it
-        // copies, which is the same information with one extra paste.
-        if (forwardToHost("insert-text", payload, pick)) {
-          flashDetail("已送到对话输入框：" + spec.label, true);
-          return;
-        }
-        copyText(payload).then((ok) => flashDetail(
-          ok ? "已复制 " + spec.label + "（" + payload.length + " 字）" : "复制失败", ok));
-      };
-      acts.appendChild(b);
+  function flushAnnotations() {
+    clearTimeout(annotateTimer);
+    Object.keys(pendingAnnotations).forEach((sel) => {
+      send({ type: "annotate", selector: sel, text: pendingAnnotations[sel] });
+      delete pendingAnnotations[sel];
     });
-
-    // The per-element delete sits WITH the insert verbs, where the element's
-    // other actions already are, instead of being pinned to the header's right
-    // edge under a wrapping title. Full width and set apart, so it reads as the
-    // destructive one.
-    const del = document.createElement("button");
-    del.className = "wide danger";
-    del.textContent = "删除这个元素";
-    del.title = "把这个锁定元素从选择栈里删掉";
-    del.onclick = () => {
-      send({ type: "remove_pick", selector: keyOf(pick) });
-      flashDetail("已删除这个锁定元素", true);
-    };
-    acts.appendChild(del);
-
-    // Take the picture again. The lock-time shot is the default, but the page
-    // moves — a pick made before a deploy or before a scroll wants a fresh one,
-    // and the card is where that decision belongs.
-    const reshoot = document.createElement("button");
-    reshoot.className = "wide";
-    reshoot.textContent = "重新截图";
-    reshoot.title = "现在重新截一张，替换这个元素的截图";
-    reshoot.onclick = () => {
-      send({ type: "rescreenshot", selector: keyOf(pick) });
-      flashDetail("正在重新截图…", true);
-    };
-    acts.appendChild(reshoot);
-
-    box.appendChild(acts);
-
-    const status = document.createElement("div");
-    status.id = "detail-status";
-    box.appendChild(status);
-
-    card.appendChild(box);
-
-    // --- the node list -------------------------------------------------------
-    // One row per locked element, and clicking a row selects it. This is what
-    // makes the block above a CHOOSER rather than a duplicate of the newest
-    // card: the selected element is the one the details and the verbs act on,
-    // and it does not have to be the newest one.
-    //
-    // The chips and the stack below both list the same picks, deliberately:
-    // this one is for switching (numbered, no scrolling), the cards are for
-    // reading and annotating one element at length.
-    if (picks.length) {
-      const list = document.createElement("div");
-      list.className = "fcard-list";
-      picks.forEach((p, i) => {
-        const row = document.createElement("button");
-        row.type = "button";
-        row.className = "fcard-node" + (i === detailIndex ? " on" : "");
-        row.title = p.selector || "";
-        const n = document.createElement("span");
-        n.className = "pick-num";
-        n.textContent = String(i + 1);
-        const label = document.createElement("span");
-        label.className = "txt";
-        label.textContent = p.selector || "(no selector)";
-        row.append(n, label);
-        row.onclick = () => {
-          detailNote = annotations[keyOf(p)] !== undefined ? annotations[keyOf(p)] : "";
-          detailIndex = i;
-          renderDetail();
-        };
-        list.appendChild(row);
-      });
-      const clear = document.createElement("button");
-      clear.type = "button";
-      clear.className = "fcard-node clear";
-      clear.textContent = "清空全部 " + picks.length;
-      clear.title = "删除全部锁定元素";
-      clear.onclick = () => { send({ type: "clear_picks" }); };
-      list.appendChild(clear);
-      card.appendChild(list);
-    }
-  }
-
-  function detailKey() {
-    const pick = detailIndex >= 0 ? picks[detailIndex] : null;
-    return pick ? keyOf(pick) : "";
-  }
-
-  // A new pick is what this block describes: jump to the newest one, and keep
-  // the sidebar at its top so the block is on screen when the pick arrives.
-  function focusNewestPick() {
-    detailNote = "";
-    if (!picks.length) { detailIndex = -1; renderDetail(); return; }
-    detailIndex = picks.length - 1;
-    renderDetail();
-    const right = $("right");
-    if (right) right.scrollTop = 0;
   }
 
   function renderPicks() {
@@ -968,44 +635,35 @@
         send({ type: "remove_pick", selector: key });
       };
 
-      const head = document.createElement("div");
-      head.className = "pick-head";
+      // The picture leads: the element crop when there is one (it names the
+      // element), else the viewport shot. Rendered from the pick's own data
+      // on every broadcast, so a re-lock's fresh capture shows up by itself.
+      const cardShot = p.clip || p.shot;
+      let fig = null;
+      if (cardShot) {
+        fig = document.createElement("div");
+        fig.className = "pick-shot";
+        const img = document.createElement("img");
+        img.src = "data:image/jpeg;base64," + cardShot;
+        img.alt = p.clip ? "锁定元素的裁剪图" : "锁定时的页面截图";
+        img.loading = "lazy";
+        // Click to open full size: a card is a summary, and a full-page shot
+        // is unreadable at summary scale.
+        img.onclick = () => window.open(img.src, "_blank");
+        const at = p.clipPath || p.shotPath;
+        img.title = at ? "点击看大图（也存于 " + at + "）" : "点击看大图";
+        fig.appendChild(img);
+      }
+
+      const sel = document.createElement("div");
+      sel.className = "pick-sel";
       const num = document.createElement("span");
       num.className = "pick-num";
       num.textContent = String(i + 1);
-      const label = document.createElement("span");
-      const cls = p.className ? "." + p.className.split(/\s+/).filter(Boolean).slice(0, 3).join(".") : "";
-      label.textContent = "<" + (p.tag || "?") + ">" + (p.id ? "#" + p.id : "") + cls;
-      const sel = document.createElement("div");
-      sel.className = "pick-sel";
-      sel.textContent = p.selector || "(no selector)";
-      head.append(num, label, sel);
-
-      const meta = document.createElement("div");
-      meta.className = "pick-meta";
-      const locked = p.lockedAt ? new Date(p.lockedAt).toLocaleTimeString() : "—";
-      meta.textContent = (p.rect ? Math.round(p.rect.w) + "×" + Math.round(p.rect.h) : "?×?")
-        + "  ·  role " + (p.role || "?")
-        + "  ·  children " + (p.childCount != null ? p.childCount : "?")
-        + "  ·  locked " + locked
-        + (p.missing ? "  ·  ⚠ 元素已不在页面上" : "");
-      const path = document.createElement("div");
-      path.className = "pick-meta";
-      path.textContent = "path: " + (p.path || p.selector || "");
-
-      const attrs = document.createElement("div");
-      attrs.className = "pick-meta";
-      const attrText = Object.entries(p.attrs || {})
-        .map(([k, v]) => k + '="' + v + '"').join("  ");
-      attrs.textContent = "attrs: " + (attrText || "(none)");
-
-      const text = document.createElement("div");
-      text.className = "pick-meta";
-      text.textContent = "text: " + (p.text ? "“" + p.text.slice(0, 120) + "”" : "(empty)");
-
-      const html = document.createElement("div");
-      html.className = "pick-html";
-      html.textContent = p.outerHTML || "(no outerHTML)";
+      const selText = document.createElement("span");
+      selText.textContent = (p.selector || "(no selector)")
+        + (p.missing || p.visible === false ? "   ⚠ 已不在页面上" : "");
+      sel.append(num, selText);
 
       const ta = document.createElement("textarea");
       if (annotations[key] === undefined && p.annotation) annotations[key] = p.annotation;
@@ -1017,27 +675,23 @@
         const value = ev.target.value;
         annotations[key] = value;
         const item = picks.find((q) => keyOf(q) === key);
-        if (item) item.annotation = value;      // keep the live report honest
-        refreshReport();
+        if (item) item.annotation = value;
         queueAnnotation(key, value);
       };
       ta.onkeydown = (ev) => ev.stopPropagation();
 
-      // Each card carries its own pair: DOM info + ITS annotation, straight to
-      // the chat composer. The annotation is sent as a field as well, so the
-      // embedder never has to parse it back out of the prose.
+      // Two insert verbs and nothing else. Both go to the chat composer; the
+      // annotation rides as its own field, so the embedder never has to parse
+      // it back out of the prose. 插入图片 carries the detail block (note +
+      // page + DOM + image paths); 插入HTML carries the element's markup.
       const acts = document.createElement("div");
       acts.className = "pick-acts";
-      const put = document.createElement("button");
-      put.textContent = "插入对话";
-      put.title = "把这张卡片的 DOM 信息 + annotation 送进对话输入框";
       const putStatus = document.createElement("span");
       putStatus.className = "pick-status";
-      put.onclick = (ev) => {
-        ev.stopPropagation();
-        const note = annotations[key] !== undefined ? annotations[key] : (p.annotation || "");
-        const payload = detailBlock(p, note);
-        if (forwardToHost("info", payload, p, note)) {
+      const noteOf = () => annotations[key] !== undefined ? annotations[key] : (p.annotation || "");
+      const deliver = (payload) => {
+        if (!payload) return;
+        if (forwardToHost("info", payload, p, noteOf())) {
           putStatus.textContent = "已送到对话输入框";
           return;
         }
@@ -1045,9 +699,26 @@
           putStatus.textContent = ok ? "已复制（没有可插入的页面）" : "复制失败";
         });
       };
-      acts.append(put, putStatus);
+      const putImg = document.createElement("button");
+      putImg.textContent = "插入图片";
+      putImg.title = "把这张卡片的截图路径 + DOM 信息 + annotation 送进对话输入框";
+      putImg.onclick = (ev) => {
+        ev.stopPropagation();
+        deliver(detailBlock(p, noteOf()));
+      };
+      const putHtml = document.createElement("button");
+      putHtml.textContent = "插入HTML";
+      putHtml.title = "把这个元素的 outerHTML 送进对话输入框";
+      putHtml.onclick = (ev) => {
+        ev.stopPropagation();
+        deliver((p.outerHTML || "").trim());
+      };
+      acts.append(putImg, putHtml, putStatus);
 
-      card.append(close, head, meta, path, attrs, text, html, ta, acts);
+      const parts = [close];
+      if (fig) parts.push(fig);
+      parts.push(sel, ta, acts);
+      card.append.apply(card, parts);
       stack.appendChild(card);
       if (key === focusedSel && caret != null) ta.focus();
     });
@@ -1056,301 +727,9 @@
     }
   }
 
-  // --- 运行记录: what the automated side did -------------------------------
-  // `vco webclick` / `vco webrun` write one JSON line per step into
-  // <run>/events.jsonl and leave step screenshots next to it. This is a
-  // read-only view of that stream: the panel is where you look at a page by
-  // hand, so it is also where you look at what the automation did to one.
-  let runsItems = [];
-  let currentRun = null;
-  let runCursor = 0;
-  let runPollTimer = null;
-  const KIND_LABELS = {
-    step_start: "开始", observation: "看到", action_result: "动作",
-    page_error: "报错", user_click: "人工点击", annotation: "批注", run_end: "结束",
-  };
-
-  function renderRuns(items) {
-    runsItems = items;
-    const sel = $("runs");
-    if (!sel) return;
-    const keep = currentRun;
-    sel.textContent = "";
-    if (!items.length) {
-      const opt = document.createElement("option");
-      opt.value = "";
-      opt.textContent = "（还没有 run：跑一次 vco webclick 就会出现在这里）";
-      sel.appendChild(opt);
-      currentRun = null;
-      $("run-events").textContent = "";
-      return;
-    }
-    items.forEach((r) => {
-      const opt = document.createElement("option");
-      opt.value = r.path;
-      const when = new Date((r.mtime || 0) * 1000).toLocaleTimeString();
-      opt.textContent = r.path + "  ·  " + when + (r.first_summary ? "  ·  " + r.first_summary : "");
-      sel.appendChild(opt);
-    });
-    if (keep && items.some((r) => r.path === keep)) {
-      sel.value = keep;
-    } else {
-      currentRun = items[0].path;
-      sel.value = currentRun;
-      openRun(currentRun);
-    }
-    startRunPolling();
-  }
-
-  function openRun(path) {
-    currentRun = path;
-    runCursor = 0;
-    $("run-events").textContent = "";
-    $("run-preview").textContent = "";
-    send({ type: "run_poll", path: path, after: 0 });
-  }
-
-  function appendRunEvents(events, next) {
-    runCursor = next;
-    const box = $("run-events");
-    if (!events.length) {
-      if (!box.children.length) {
-        box.textContent = "";
-        const empty = document.createElement("div");
-        empty.className = "pick-meta";
-        empty.textContent = "（这个 run 还没有事件）";
-        box.appendChild(empty);
-      }
-      return;
-    }
-    if (box.firstChild && box.firstChild.className === "pick-meta") box.textContent = "";
-    events.forEach((ev) => {
-      const row = document.createElement("div");
-      row.className = "run-event" + (ev.kind === "page_error" ? " err" : "");
-      const t = document.createElement("span");
-      t.className = "t";
-      t.textContent = ev.ts ? new Date(ev.ts).toLocaleTimeString() : "--:--:--";
-      const k = document.createElement("span");
-      k.className = "k";
-      k.textContent = KIND_LABELS[ev.kind] || ev.kind || "?";
-      const sum = document.createElement("span");
-      sum.className = "s";
-      sum.textContent = [ev.step != null ? "#" + ev.step : "", ev.summary || ""]
-        .filter(Boolean).join(" ");
-      row.append(t, k, sum);
-      if (ev.image) {
-        const img = document.createElement("img");
-        img.className = "thumb";
-        img.src = "/runs/" + currentRun + "/" + ev.image;
-        img.title = ev.image;
-        img.onclick = () => {
-          $("run-preview").textContent = "";
-          const big = document.createElement("img");
-          big.src = img.src;
-          $("run-preview").appendChild(big);
-        };
-        row.appendChild(img);
-      }
-      box.appendChild(row);
-      box.scrollTop = box.scrollHeight;
-    });
-  }
-
-  function pollRun() {
-    if (currentRun) send({ type: "run_poll", path: currentRun, after: runCursor });
-  }
-
-  function startRunPolling() {
-    if (runPollTimer) return;
-    runPollTimer = setInterval(pollRun, 2000);
-  }
-
-  $("runs").onchange = (e) => openRun(e.target.value);
-  $("btn-runs-refresh").onclick = () => send({ type: "runs_list" });
-
-  // --- export: 哪里错了 + 谁错了 ------------------------------------------
-  // This is the whole product of the panel. It is a report, not a prompt: the
-  // page it happened on, then for every element the user locked — where it is,
-  // what it is, which part of the UI owns it, and what the user says is wrong —
-  // plus the console/network evidence that usually names the culprit.
-  // Sending is debounced; *exporting* must not be, or a note typed a moment
-  // earlier is missing from the report the user just copied.
-  function queueAnnotation(sel, text) {
-    pendingAnnotations[sel] = text;
-    clearTimeout(annotateTimer);
-    annotateTimer = setTimeout(flushAnnotations, 250);
-  }
-
-  function flushAnnotations() {
-    clearTimeout(annotateTimer);
-    Object.keys(pendingAnnotations).forEach((sel) => {
-      send({ type: "annotate", selector: sel, text: pendingAnnotations[sel] });
-      delete pendingAnnotations[sel];
-    });
-  }
-
-  function ownerText(o) {
-    if (!o) return "";
-    let t = "<" + o.tag + ">" + (o.id ? "#" + o.id : "")
-      + (o.cls ? "." + o.cls.split(".").join(".") : "");
-    const bits = [];
-    if (o.role) bits.push("role=" + o.role);
-    if (o.label) bits.push('aria-label="' + o.label + '"');
-    if (o.hook) bits.push(o.hook);
-    if (bits.length) t += "  (" + bits.join(", ") + ")";
-    if (o.hops) t += "   ↑" + o.hops + " 层";
-    return t;
-  }
-
-  function reportTime() {
-    const d = new Date();
-    const pad = (n) => String(n).padStart(2, "0");
-    return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate())
-      + " " + pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds());
-  }
-
-  function buildReport() {
-    const { w, h } = frameSize();
-    const out = [];
-    out.push("# vco 现场报告 — " + reportTime());
-    out.push("");
-    out.push("- 页面: " + (pageContext.url || "(未知)"));
-    out.push("- 标题: " + (pageContext.title || "(无)"));
-    out.push("- 视口: " + w + "×" + h);
-    out.push("- 锁定元素: " + picks.length);
-    out.push("");
-    if (!picks.length) {
-      out.push("_还没有锁定任何元素：在视口里 ⌘/Ctrl + 点击出问题的元素，");
-      out.push("然后在卡片里写一句“这里怎么了”。_");
-      out.push("");
-    }
-    picks.forEach((p, i) => {
-      const r = p.rect || { w: 0, h: 0, x: 0, y: 0 };
-      const note = annotations[keyOf(p)] !== undefined
-        ? annotations[keyOf(p)] : (p.annotation || "");
-      out.push("## " + (i + 1) + ". " + (note ? note : "（未写标注）"));
-      out.push("");
-      out.push("- 选择器: `" + (p.selector || "?") + "`");
-      out.push("- 位置: " + Math.round(r.w) + "×" + Math.round(r.h)
-        + " @ (" + Math.round(r.x) + ", " + Math.round(r.y) + ")"
-        + (p.visible === false || p.missing ? "  **不可见/已不在页面上**" : ""));
-      out.push("- 是谁: " + ownerText(p.owner) || "- 是谁: (没找到可识别的容器)");
-      out.push("- 路径: " + (p.path || ""));
-      out.push("- 元素: `" + (p.outerHTML || "").replace(/`/g, "'").slice(0, 300) + "`");
-      if (p.text) out.push("- 文本: " + JSON.stringify(p.text));
-      const attrs = Object.entries(p.attrs || {}).map(([k, v]) => k + '="' + v + '"');
-      if (attrs.length) out.push("- 属性: " + attrs.join(" "));
-      if (p.lockedAt) out.push("- 锁定时间: " + new Date(p.lockedAt).toLocaleString());
-      out.push("");
-    });
-    const errs = liveErrors.slice(-10);
-    if (errs.length) {
-      out.push("## 控制台错误（最近 " + errs.length + " 条）");
-      out.push("");
-      errs.forEach((e) => out.push("- " + e));
-      out.push("");
-    }
-    const failed = (pageContext.failedRequests || []).slice(-10);
-    if (failed.length) {
-      out.push("## 失败请求（最近 " + failed.length + " 条）");
-      out.push("");
-      failed.forEach((f) => out.push("- " + (f.status || f.error || "?") + "  " + f.url));
-      out.push("");
-    }
-    return out.join("\n");
-  }
-
-  // The report is live in the sidebar, and pulling the page context (console
-  // errors, failed requests) is throttled: it is one evaluate round trip and
-  // nothing changes that fast.
-  let lastContextAt = 0;
-  function requestContext() {
-    if (Date.now() - lastContextAt < 1000) return;
-    lastContextAt = Date.now();
-    send({ type: "context" });
-  }
-
-  function refreshReport() {
-    const el = $("report-preview");
-    if (el) el.textContent = buildReport();
-    requestContext();
-  }
-
-  function downloadBlob(blob, filename) {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 4000);
-  }
-
-  function stampedName(ext) {
-    const d = new Date();
-    const pad = (n) => String(n).padStart(2, "0");
-    return "vco-" + d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate())
-      + "-" + pad(d.getHours()) + pad(d.getMinutes()) + pad(d.getSeconds()) + ext;
-  }
-
-  // The annotated screenshot answers "哪里" without words: same frame the user
-  // is looking at, with the locked elements boxed and numbered like the cards.
-  function downloadAnnotatedShot() {
-    const { w, h } = frameSize();
-    const canvas = document.createElement("canvas");
-    canvas.width = w;
-    canvas.height = h;
-    const g = canvas.getContext("2d");
-    g.drawImage(FRAME, 0, 0, w, h);
-    g.lineWidth = 3;
-    g.font = "bold 16px monospace";
-    picks.forEach((p, i) => {
-      if (!p.rect) return;
-      g.strokeStyle = "#f97316";
-      g.strokeRect(p.rect.x, p.rect.y, p.rect.w, p.rect.h);
-      const label = "#" + (i + 1);
-      const tw = g.measureText(label).width + 10;
-      let ly = p.rect.y - 20;
-      if (ly < 0) ly = p.rect.y + 2;
-      g.fillStyle = "#f97316";
-      g.fillRect(p.rect.x, ly, tw, 20);
-      g.fillStyle = "#fff";
-      g.fillText(label, p.rect.x + 5, ly + 15);
-    });
-    canvas.toBlob((blob) => {
-      if (!blob) {
-        $("export-status").textContent = "截图导出失败";
-        return;
-      }
-      downloadBlob(blob, stampedName(".png"));
-      $("export-status").textContent = "已下载标注截图（" + picks.length + " 个框）";
-    }, "image/png");
-  }
-
-  $("btn-copy-report").onclick = () => {
-    flushAnnotations();
-    const text = buildReport();
-    if (navigator.clipboard) {
-      navigator.clipboard.writeText(text).then(
-        () => { $("export-status").textContent = "已复制报告（" + text.length + " 字）"; },
-        () => { $("export-status").textContent = "复制失败，报告已显示在下方，手动选吧"; });
-    }
-  };
-  $("btn-download-report").onclick = () => {
-    flushAnnotations();
-    const text = buildReport();
-    downloadBlob(new Blob([text], { type: "text/markdown;charset=utf-8" }),
-                 stampedName(".md"));
-    $("export-status").textContent = "已下载报告（" + text.length + " 字）";
-  };
-  $("btn-download-shot").onclick = downloadAnnotatedShot;
   document.addEventListener("visibilitychange", () => { if (document.hidden) flushAnnotations(); });
   window.addEventListener("pagehide", flushAnnotations);
 
   fitStage();
-  renderDiag();
-  renderDetail();
-  refreshReport();
   connect();
 })();

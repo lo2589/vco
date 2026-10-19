@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import time
 from datetime import datetime
@@ -14,13 +15,19 @@ from PIL import Image, ImageDraw, ImageGrab
 
 from .adaptive_zoom import AdaptiveZoomProvider
 from .capture import PillowScreenCapture
-from .diff import make_diff_image, verify_target_stable
+from .diff import crop_around, make_diff_image, verify_target_stable
 from .executor import (
     DryRunExecutor,
     PyAutoGuiExecutor,
     ResolvedAction,
     input_text as _input_text,
     resolve_action,
+)
+from .float_board import BOARD_DEFAULT_PORT, BoardClient, BoardExecutor
+from .float_steps import (
+    StepsClient,
+    STEPS_DEFAULT_PORT,
+    clean_artifacts,
 )
 from .geometry import GridMapper
 from .grid import render_numbered_grid
@@ -66,6 +73,49 @@ def _parse_headers(values) -> dict:
             raise SystemExit(f"--header expects 'Name: value', got {raw!r}")
         out[name.strip()] = value.strip()
     return out
+
+
+def _watch_source(client, root: Path, poll: float) -> int:
+    """Feed every new step image under ``root`` to the overlay until Ctrl-C.
+
+    The overlay is only a viewer, so this is deliberately dumb: it scans for
+    ``step-*-clean.png`` / ``step-*.marked.png`` images it has not seen and
+    pushes one step per image, newest last. A run writes both a clean and a
+    grid frame per step; the grid one is what the model actually saw, so it is
+    preferred when both exist.
+    """
+    import time
+
+    root = Path(root)
+    seen: set[str] = set()
+    pushed = 0
+    print(json.dumps({"watching": str(root), "poll": poll}, ensure_ascii=False),
+          flush=True)
+    try:
+        while True:
+            if not client.healthy():
+                print(json.dumps({"float": "gone", "pushed": pushed},
+                                 ensure_ascii=False))
+                return pushed
+            for grid in sorted(root.glob("**/step-*.grid.png")):
+                key = str(grid)
+                if key in seen:
+                    continue
+                clean = Path(str(grid).replace(".grid.png", "-clean.png"))
+                seen.add(key)
+                stem = grid.name.split(".")[0]
+                client.push({
+                    "title": stem,
+                    "detail": "grid",
+                    "image": str(grid),
+                    "clean": str(clean) if clean.exists() else None,
+                })
+                pushed += 1
+            time.sleep(max(0.05, poll))
+    except KeyboardInterrupt:
+        print(json.dumps({"float": "stopped", "pushed": pushed},
+                         ensure_ascii=False))
+        return pushed
 
 
 def _grid(args) -> GridSpec:
@@ -268,6 +318,96 @@ def build_parser() -> argparse.ArgumentParser:
         "--api-key-env", help="environment variable containing required bearer token"
     )
 
+    board = commands.add_parser(
+        "board",
+        help="translucent floating board narrating each action (for screencasts)",
+    )
+    board.add_argument("--write", help="append a line to the board (starts it if needed)")
+    board.add_argument("--clear", action="store_true", help="remove all lines")
+    board.add_argument("--show", action="store_true", help="make the board visible")
+    board.add_argument("--hide", action="store_true", help="hide the board, keep it running")
+    board.add_argument("--stop", action="store_true", help="shut the board helper down")
+    board.add_argument("--port", type=int, default=BOARD_DEFAULT_PORT)
+    board.add_argument(
+        "--position",
+        choices=("bottom", "top"),
+        default="bottom",
+        help="screen edge (only applies when this call starts the helper)",
+    )
+    board.add_argument(
+        "--screen",
+        type=int,
+        default=None,
+        help="NSScreen index for multi-display setups (default: macOS main screen; "
+             "only applies when this call starts the helper)",
+    )
+
+    float_cmd = commands.add_parser(
+        "float",
+        help="floating overlay showing each step's screenshot, with a "
+             "scrollable step list (for watching a run)",
+    )
+    float_cmd.add_argument("--port", type=int, default=STEPS_DEFAULT_PORT)
+    float_cmd.add_argument(
+        "--surface",
+        choices=("top", "bottom"),
+        default="top",
+        help="screen edge (only applies when this call starts the helper)",
+    )
+    float_cmd.add_argument(
+        "--screen",
+        type=int,
+        default=None,
+        help="NSScreen index for multi-display setups (default: main screen; "
+             "only applies when this call starts the helper)",
+    )
+    float_cmd.add_argument("--width", type=int, default=340)
+    float_cmd.add_argument("--height", type=int, default=480)
+    float_cmd.add_argument(
+        "--idle",
+        type=float,
+        default=300.0,
+        help="seconds with no new step before the overlay fades out and hides; "
+             "0 keeps it on screen (default: %(default)s)",
+    )
+    float_cmd.add_argument(
+        "--push",
+        help="push one step as JSON, e.g. '{\"title\":\"find\",\"image\":\"/x/marked.png\"}'; "
+             "starts the overlay if needed",
+    )
+    float_cmd.add_argument(
+        "--source",
+        type=Path,
+        help="artifact directory to watch: every new step-*.png becomes a step "
+             "(implies a foreground watch loop)",
+    )
+    float_cmd.add_argument(
+        "--poll", type=float, default=0.4,
+        help="seconds between directory scans with --source (default: 0.4)",
+    )
+    float_cmd.add_argument("--clear", action="store_true", help="remove all steps")
+    float_cmd.add_argument("--show", action="store_true")
+    float_cmd.add_argument("--hide", action="store_true")
+    float_cmd.add_argument("--stop", action="store_true", help="shut the overlay down")
+
+    clean = commands.add_parser(
+        "clean",
+        help="delete old screenshots from the artifact directory",
+    )
+    clean.add_argument("--dir", type=Path, default=Path(".screenshot"))
+    clean.add_argument(
+        "--keep-days", type=float, default=7.0,
+        help="keep artifacts newer than this many days, 0 disables (default: 7)",
+    )
+    clean.add_argument(
+        "--keep-runs", type=int, default=20,
+        help="always keep the newest N run directories, 0 disables (default: 20)",
+    )
+    clean.add_argument(
+        "--execute", action="store_true",
+        help="actually delete; without it this is a dry run that only reports",
+    )
+
     debug = commands.add_parser(
         "debug",
         help="drive a real browser through the DOM inspector panel",
@@ -372,6 +512,34 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--region", type=_region, required=True)
     _add_provider_args(run)
     run.add_argument("--execute", action="store_true", help="enable real mouse input")
+    run.add_argument(
+        "--no-cursor-badge",
+        action="store_true",
+        help="do not show the floating ring that marks agent-driven mouse movement",
+    )
+    run.add_argument(
+        "--no-board",
+        action="store_true",
+        help="do not narrate actions onto the floating board (vco board)",
+    )
+    run.add_argument(
+        "--board-port",
+        type=int,
+        default=BOARD_DEFAULT_PORT,
+        help="port the floating board listens on (default: %(default)s)",
+    )
+    run.add_argument(
+        "--float",
+        action="store_true",
+        help="show each step's screenshot in a floating overlay (vco float); "
+             "starts it if needed and never lets it fail the run",
+    )
+    run.add_argument(
+        "--float-port",
+        type=int,
+        default=STEPS_DEFAULT_PORT,
+        help="port the float overlay listens on (default: %(default)s)",
+    )
     run.add_argument("--max-steps", type=int, default=12)
     run.add_argument("--settle", type=float, default=0.7)
     run.add_argument(
@@ -458,7 +626,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     click.add_argument("--target", help="on-screen text to locate via OCR first")
     click.add_argument("--task", help="task for the vision model; derived from --target")
-    click.add_argument("--at", type=_point, help="click x,y directly, skip locating")
+    click.add_argument("--at", type=_point,
+                       help="click x,y directly, skip locating (negative coords on a "
+                       "left-side display work as-is: --at -1286,580 is auto-detected)")
     click.add_argument("--image", type=Path, help="locate on this image instead of capturing")
     click.add_argument("--region", type=_region, help="x,y,width,height; default full screen")
     click.add_argument("--display", type=int, default=1, help="display index; 1 = main (default)")
@@ -474,6 +644,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="skip the pre-click region-stability check",
     )
     click.add_argument(
+        "--guard-reference", type=Path, metavar="IMAGE",
+        help="with --at: before clicking, compare a small crop around the "
+        "target against the same spot in this reference screenshot (e.g. the "
+        "one the coordinates were read from) and refuse to click if the "
+        "layout has drifted; similarity gate is --verify-threshold",
+    )
+    click.add_argument(
         "--verify-threshold",
         type=float,
         default=0.8,
@@ -483,6 +660,11 @@ def build_parser() -> argparse.ArgumentParser:
     click.add_argument(
         "--button", choices=("left", "right", "middle"), default="left",
         help="mouse button (right opens context menus)",
+    )
+    click.add_argument(
+        "--no-cursor-badge",
+        action="store_true",
+        help="do not show the floating ring that marks agent-driven mouse movement",
     )
     _add_provider_args(click, default="none")
     _add_grid_args(click)
@@ -497,13 +679,55 @@ def build_parser() -> argparse.ArgumentParser:
         "scroll", help="scroll the wheel; positive --amount scrolls down"
     )
     scroll.add_argument("--amount", type=int, required=True, help="wheel notches; + down, - up")
-    scroll.add_argument("--at", type=_point, help="x,y to scroll over; default: where the pointer is")
+    scroll.add_argument("--at", type=_point,
+                        help="x,y to scroll over; default: where the pointer is "
+                        "(negative coords on a left-side display work as-is)")
+
+    drag = commands.add_parser(
+        "drag",
+        help="real mouse drag, e.g. box-select: vco find --display 2 --target X "
+        "for the coordinates, then vco drag --from ... --to ... --modifier ctrl",
+    )
+    drag.add_argument("--from", dest="from_point", type=_point, required=True,
+                      help="start x,y (negative coords on a left-side display work as-is)")
+    drag.add_argument("--to", dest="to_point", type=_point, required=True,
+                      help="end x,y")
+    drag.add_argument("--button", choices=("left", "right"), default="left")
+    drag.add_argument("--duration", type=float, default=0.5,
+                      help="seconds the drag motion takes (default: %(default)s)")
+    drag.add_argument("--modifier", action="append",
+                      choices=("ctrl", "cmd", "shift", "alt"), default=[],
+                      help="hold during the whole drag (repeatable; "
+                      "--modifier ctrl is box-select)")
+    drag.add_argument("--pause", type=float, default=0.1,
+                      help="pyautogui pause between actions (default: %(default)s)")
+
+    wait = commands.add_parser(
+        "wait",
+        help="wait until on-screen text appears/disappears (OCR only, deterministic)",
+    )
+    wait.add_argument("--target", required=True, help="text to watch for")
+    wait.add_argument("--contains", action="store_true",
+                      help="substring match instead of exact (same semantics as find)")
+    mode = wait.add_mutually_exclusive_group()
+    mode.add_argument("--appear", action="store_true",
+                      help="wait until the target is visible (default)")
+    mode.add_argument("--disappear", action="store_true",
+                      help="wait until the target is gone")
+    wait.add_argument("--timeout", type=float, default=60,
+                      help="give up after N seconds; exit code is non-zero (default: %(default)s)")
+    wait.add_argument("--interval", type=float, default=1.0,
+                      help="sleep between capture+OCR rounds (default: %(default)s)")
+    wait.add_argument("--display", type=int, default=1, help="display index; 1 = main (default)")
+    wait.add_argument("--region", type=_region, help="x,y,width,height; default full screen")
 
     type_cmd = commands.add_parser(
         "type", help="locate a text field and type/paste text into it"
     )
     type_cmd.add_argument("--target", help="field label to locate via OCR")
-    type_cmd.add_argument("--at", type=_point, help="click x,y directly, skip locating")
+    type_cmd.add_argument("--at", type=_point,
+                          help="click x,y directly, skip locating (negative coords on "
+                          "a left-side display work as-is)")
     type_cmd.add_argument("--text", help="text to input")
     type_cmd.add_argument(
         "--text-env",
@@ -1264,8 +1488,43 @@ def _webclick_marks(args, stamp: str) -> dict:
                 result["video"] = video
 
 
+# Flags whose value is a coordinate list (x,y or x,y,w,h). argparse reads any
+# value that starts with '-' as another flag, so a secondary display sitting
+# left of the main one (negative global X) makes `--at -1286,580` fail with
+# "expected one argument". Only these flags get the `--flag=value` rewrite.
+_COORD_VALUE_FLAGS = ("--at", "--region", "--from", "--to")
+# First component negative (that is the case argparse chokes on); the rest may
+# be signed either way. Ints only, matching what _point/_region accept.
+_COORD_VALUE_RE = re.compile(r"^-\d+(,-?\d+){1,3}$")
+
+
+def _normalize_coord_args(argv: list[str]) -> list[str]:
+    """Rewrite ``--at -1286,580`` to ``--at=-1286,580`` so argparse accepts it.
+
+    Only fires when the flag takes coordinates AND the next token really looks
+    like a negative-leading coordinate list — anything else (a real flag, a
+    plain negative number that is not a coordinate list) passes through
+    untouched.
+    """
+
+    out = []
+    i = 0
+    while i < len(argv):
+        token = argv[i]
+        if token in _COORD_VALUE_FLAGS and i + 1 < len(argv):
+            value = argv[i + 1]
+            if _COORD_VALUE_RE.match(value or ""):
+                out.append(token + "=" + value)
+                i += 2
+                continue
+        out.append(token)
+        i += 1
+    return out
+
+
 def main(argv=None) -> int:
-    args = build_parser().parse_args(argv)
+    raw = list(sys.argv[1:] if argv is None else argv)
+    args = build_parser().parse_args(_normalize_coord_args(raw))
     if args.command == "overlay":
         image = Image.open(args.image)
         grid = _grid(args)
@@ -1359,6 +1618,83 @@ def main(argv=None) -> int:
             )
         except ValueError as exc:
             raise SystemExit(str(exc)) from exc
+        return 0
+
+    if args.command == "board":
+        if not 1 <= args.port <= 65535:
+            raise SystemExit("--port must be in 1..65535")
+        # watchdog=False: the board must outlive this one-shot command, or it
+        # would die the moment `vco board` exits (that is what --stop is for).
+        client = BoardClient(args.port, position=args.position, watchdog=False,
+                             screen=args.screen)
+        if args.stop:
+            print(json.dumps({"port": args.port,
+                              "board": "stopped" if client.stop() else "not running"},
+                             ensure_ascii=False))
+            return 0
+        # Everything else wants a live board: `vco board --write ...` is the
+        # one-call path, so it also starts the helper when needed.
+        if not client.ensure_running():
+            print(json.dumps({"port": args.port, "board": "unavailable"},
+                             ensure_ascii=False))
+            return 2
+        record = {"port": args.port, "board": "running"}
+        if args.write is not None:
+            record["written"] = client.write(args.write)
+        if args.clear:
+            record["cleared"] = client.clear()
+        if args.show:
+            record["shown"] = client.show()
+        if args.hide:
+            record["hidden"] = client.hide()
+        print(json.dumps(record, ensure_ascii=False))
+        return 0
+
+    if args.command == "float":
+        if not 1 <= args.port <= 65535:
+            raise SystemExit("--port must be in 1..65535")
+        # watchdog=False, same reason as `board`: a one-shot `vco float` must
+        # not take the overlay down with it.
+        client = StepsClient(args.port, position=args.surface, watchdog=False,
+                             screen=args.screen, width=args.width,
+                             height=args.height, idle=args.idle)
+        if args.stop:
+            print(json.dumps({"port": args.port,
+                              "float": "stopped" if client.stop() else "not running"},
+                             ensure_ascii=False))
+            return 0
+        if not client.ensure_running():
+            print(json.dumps({"port": args.port, "float": "unavailable"},
+                             ensure_ascii=False))
+            return 2
+        record = {"port": args.port, "float": "running"}
+        if args.clear:
+            record["cleared"] = client.clear()
+        if args.push is not None:
+            try:
+                step = json.loads(args.push)
+            except json.JSONDecodeError as exc:
+                raise SystemExit(f"--push is not valid JSON: {exc}") from exc
+            if not isinstance(step, dict):
+                raise SystemExit("--push must be a JSON object")
+            record["pushed"] = client.push(step)
+        if args.show:
+            record["shown"] = client.show()
+        if args.hide:
+            record["hidden"] = client.hide()
+        if args.source is not None:
+            record["watched"] = _watch_source(client, args.source, args.poll)
+        print(json.dumps(record, ensure_ascii=False))
+        return 0
+
+    if args.command == "clean":
+        summary = clean_artifacts(
+            args.dir,
+            keep_days=args.keep_days or None,
+            keep_runs=args.keep_runs or None,
+            dry_run=not args.execute,
+        )
+        print(json.dumps(summary, ensure_ascii=False))
         return 0
 
     if args.command == "debug":
@@ -1579,10 +1915,124 @@ def main(argv=None) -> int:
         print(json.dumps({"scrolled": args.amount, "x": at[0], "y": at[1]}))
         return 0
 
+    if args.command == "drag":
+        import pyautogui
+
+        pyautogui.FAILSAFE = True
+        pyautogui.PAUSE = args.pause
+        # pyautogui's macOS key names, not argparse's friendlier spellings.
+        key_names = {"ctrl": "ctrl", "cmd": "command", "shift": "shift", "alt": "option"}
+        # Modifiers wrap the whole gesture by hand (keyDown … keyUp) because
+        # ResolvedAction/drag has no modifier concept — Ctrl+drag box-select
+        # needs the key held from before mouseDown until after mouseUp.
+        held = []
+        try:
+            for mod in args.modifier:
+                pyautogui.keyDown(key_names[mod])
+                held.append(mod)
+            pyautogui.moveTo(*args.from_point)
+            pyautogui.mouseDown(button=args.button)
+            pyautogui.moveTo(*args.to_point, duration=args.duration)
+            pyautogui.mouseUp(button=args.button)
+        finally:
+            for mod in reversed(held):
+                pyautogui.keyUp(key_names[mod])
+        print(json.dumps({
+            "dragged": True,
+            "from": list(args.from_point),
+            "to": list(args.to_point),
+            "modifier": list(args.modifier),
+        }, ensure_ascii=False))
+        return 0
+
+    if args.command == "wait":
+        # OCR only, no vision provider: a wait loop must stay cheap and
+        # deterministic — same backend + same find_text matching as find's
+        # OCR-first path, just re-asked every interval.
+        condition = "disappear" if args.disappear else "appear"
+        try:
+            ocr_backend = create_ocr_backend("auto", timeout=30.0)
+        except (RuntimeError, ValueError) as exc:
+            raise SystemExit(f"cannot initialize OCR: {exc}") from exc
+        ocr_request = OCRRequest(languages=("zh-Hans", "en-US"))
+        started = time.monotonic()
+        deadline = started + args.timeout
+        hit = None
+        met = False
+        while True:
+            clean, region = _capture_for_args(args)
+            result = ocr_backend.recognize(clean, ocr_request)
+            matches = result.find_text(args.target, exact=not args.contains)
+            if condition == "appear" and matches:
+                box = matches[0]
+                # box.center is image-local; the region carries the capture's
+                # global offset (display origin + --region).
+                hit = (round(region.x + box.center[0]),
+                       round(region.y + box.center[1]))
+                met = True
+                break
+            if condition == "disappear" and not matches:
+                met = True
+                break
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(args.interval)
+        record = {
+            "condition": condition,
+            "met": met,
+            "waited": round(time.monotonic() - started, 1),
+            "target": args.target,
+        }
+        if hit is not None:
+            record["x"], record["y"] = hit
+        print(json.dumps(record, ensure_ascii=False))
+        # Scripts branch on this: an unmet condition is a failure, not data.
+        return 0 if met else 2
+
     if args.command in ("find", "click"):
+        if getattr(args, "guard_reference", None) is not None and (
+            args.command != "click" or args.at is None
+        ):
+            raise SystemExit("--guard-reference only works with: vco click --at x,y")
         if args.command == "click" and args.at is not None:
             x, y = args.at
-            PyAutoGuiExecutor().execute(_click_action(args, (x, y)))
+            if args.guard_reference is not None:
+                if not args.guard_reference.exists():
+                    raise SystemExit(
+                        f"--guard-reference not found: {args.guard_reference}"
+                    )
+                reference = Image.open(args.guard_reference)
+                pre, guard_region = _capture_for_args(args)
+                if reference.size != pre.size:
+                    raise SystemExit(
+                        f"--guard-reference size {reference.size} does not match "
+                        f"the current capture {pre.size}; take the reference with "
+                        "the same display/region settings"
+                    )
+                spot = (x - guard_region.x, y - guard_region.y)
+                stable, similarity = verify_target_stable(
+                    reference, pre, spot, threshold=args.verify_threshold
+                )
+                if not stable:
+                    # The layout moved since the reference was taken (a stream
+                    # finished, a panel opened, the window resized). Clicking
+                    # blind would land on whatever now sits at those coords.
+                    args.dir.mkdir(parents=True, exist_ok=True)
+                    stamp = _timestamp()
+                    ref_path = args.dir / f"guard-{stamp}-reference.png"
+                    cur_path = args.dir / f"guard-{stamp}-current.png"
+                    crop_around(reference, spot, (120, 120)).save(ref_path)
+                    crop_around(pre, spot, (120, 120)).save(cur_path)
+                    print(json.dumps({
+                        "clicked": False, "guard": "region-changed",
+                        "similarity": round(similarity, 4), "x": x, "y": y,
+                        "reference_crop": str(ref_path),
+                        "current_crop": str(cur_path),
+                    }, ensure_ascii=False))
+                    return 3
+            PyAutoGuiExecutor(cursor_badge=not args.no_cursor_badge).execute(
+                _click_action(args, (x, y))
+            )
             record = {"clicked": True, "x": x, "y": y}
             if not args.no_click_trace:
                 args.dir.mkdir(parents=True, exist_ok=True)
@@ -1701,7 +2151,9 @@ def main(argv=None) -> int:
                     record["record"] = str(json_path)
                     print(json.dumps(record, indent=2, ensure_ascii=False))
                     return 2
-            PyAutoGuiExecutor().execute(_click_action(args, resolved.start))
+            PyAutoGuiExecutor(cursor_badge=not args.no_cursor_badge).execute(
+                _click_action(args, resolved.start)
+            )
             record["executed"] = True
             if not args.no_click_trace:
                 post, region = _capture_for_args(args)
@@ -2083,7 +2535,34 @@ def main(argv=None) -> int:
             print(f"vco run: continuing without OCR hints ({exc})", file=sys.stderr)
         else:
             args.ocr_backend = "auto"
-    executor = PyAutoGuiExecutor() if args.execute else DryRunExecutor()
+    executor = (
+        PyAutoGuiExecutor(cursor_badge=not args.no_cursor_badge)
+        if args.execute
+        else DryRunExecutor()
+    )
+    if args.execute and not args.no_board:
+        # Narration is best-effort and never spawns a board: the wrapper only
+        # writes when one is already up (`vco board`), and stops probing after
+        # the first failed health check.
+        executor = BoardExecutor(executor, port=args.board_port)
+    on_step = None
+    if args.float:
+        # Best-effort: start the overlay once, then hand the loop a callback.
+        # If no interpreter can draw, say so once and run exactly as before.
+        float_client = StepsClient(args.float_port, position="top",
+                                   watchdog=True, screen=None)
+        if float_client.ensure_running():
+            float_client.clear()
+
+            def on_step(step, title, detail, image, elapsed):  # noqa: F811
+                float_client.push({
+                    "title": title, "detail": detail,
+                    "image": image, "elapsed": elapsed,
+                })
+        else:
+            print("vco run: float overlay unavailable (no AppKit interpreter); "
+                  "continuing without it", file=sys.stderr)
+
     loop = ComputerUseLoop(
         capture=PillowScreenCapture(),
         provider=_provider(args),
@@ -2093,6 +2572,7 @@ def main(argv=None) -> int:
         artifact_root=args.artifacts,
         settle_seconds=args.settle,
         max_unchanged=args.max_unchanged if args.execute else 0,
+        on_step=on_step,
     )
     result = loop.run(args.task, max_steps=args.max_steps)
     print(

@@ -204,18 +204,35 @@ class PanelAssetsTest(unittest.TestCase):
         session = DebugSession(profile_dir=Path("/tmp/never-used"), headful=False, target=None)
         self.assertEqual(make_handler(session).protocol_version, "HTTP/1.1")
 
-    def test_panel_reports_its_own_connection_and_input_counters(self):
+    def test_panel_reconnects_and_identifies_itself(self):
         js = (DEBUG_ASSETS / "panel.js").read_text(encoding="utf-8")
         html = (DEBUG_ASSETS / "panel.html").read_text(encoding="utf-8")
         # A dead socket must be visible and must heal itself.
         self.assertIn("link-banner", html)
         self.assertIn("setTimeout(connect", js)
+        # The server records who is driving the panel (its trace log is the
+        # only way to tell "browser never delivered the event" from "server
+        # never acted on it").
         self.assertIn("client_info", js)
-        self.assertIn("client_pulse", js)
-        self.assertIn('id="diag"', html)
         # Input must not depend on Pointer Events being delivered.
         self.assertIn('addEventListener("mousedown"', js)
         self.assertIn('addEventListener("mouseup"', js)
+
+    def test_sidebar_is_image_first_cards_and_nothing_else(self):
+        # The big UI cut: detail block, console, runs, export and diagnostics
+        # are gone; a pick card is a screenshot plus two insert verbs.
+        js = (DEBUG_ASSETS / "panel.js").read_text(encoding="utf-8")
+        html = (DEBUG_ASSETS / "panel.html").read_text(encoding="utf-8")
+        self.assertIn("插入图片", js)
+        self.assertIn("插入HTML", js)
+        self.assertIn("pick-shot", js)
+        self.assertIn("p.clip || p.shot", js)
+        for gone in ("detail-card", "detail-host", "type-status", "err-count",
+                     "btn-copy-report", "report-preview", 'id="runs"', 'id="diag"'):
+            self.assertNotIn(gone, html)
+        for gone in ("buildReport", "renderDetail", "renderDiag", "pushError",
+                     "renderRuns", "client_pulse", "run_poll", "runs_list"):
+            self.assertNotIn(gone, js)
 
     def test_panel_offers_the_lock_gesture_and_a_clear_action(self):
         js = (DEBUG_ASSETS / "panel.js").read_text(encoding="utf-8")
@@ -229,7 +246,7 @@ class PanelAssetsTest(unittest.TestCase):
         self.assertIn("contextmenu", js)
         self.assertIn("btn-clear-picks", html)
         # each locked element's card carries its own annotation box (built in JS)
-        self.assertIn('anno.className = "anno"', js)
+        self.assertIn('document.createElement("textarea")', js)
 
     def test_inject_exposes_the_shared_describe_entry_points(self):
         js = (DEBUG_ASSETS / "inject.js").read_text(encoding="utf-8")
@@ -250,9 +267,8 @@ class PanelAssetsTest(unittest.TestCase):
         self.assertIn("modifiers: modifiersOf(e)", js)
         # the mask must be editable for paste/copy/IME to fire at all
         self.assertIn('id="mask" tabindex="0" contenteditable="true"', html)
-        # the mask is the only keyboard sink; IME progress is shown beside it
+        # the mask is the only keyboard sink
         self.assertNotIn('id="typebox"', html)
-        self.assertIn('id="type-status"', html)
 
 
 if __name__ == "__main__":

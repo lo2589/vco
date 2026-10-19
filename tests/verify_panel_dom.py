@@ -1,13 +1,15 @@
-"""DOM-level check of the vco debug panel's slim sidebar + floating detail block.
+"""DOM-level check of the vco debug panel's slim sidebar and image-first cards.
 
 Runs a real Chromium against a running `vco debug` server, replaces the page's
 WebSocket with a stub that answers the handshake, then feeds one synthetic
 "pick" message and asserts what the sidebar actually renders:
 
-  * the sidebar is slim (no verbose hint blocks),
-  * a locked element produces the floating detail block at the top,
-  * the block offers selector / HTML / text / info, and
-  * its buttons postMessage to the embedding page (the dsh insert channel).
+  * the sidebar is just the target-url card and the pick stack (the detail
+    block, console, runs, export and diagnostics sections are gone),
+  * a locked element produces an image-first card: screenshot on top, selector,
+    annotation box, and exactly two insert verbs,
+  * the insert verbs postMessage to the embedding page (the dsh insert
+    channel).
 
 Usage:  python tests/verify_panel_dom.py [--url http://127.0.0.1:8919/]
 """
@@ -79,6 +81,14 @@ HOST = """<!doctype html><html><body style="margin:0">
 </script>
 </body></html>"""
 
+# Two distinct 1x1 PNGs, so the check can prove the card prefers the element
+# crop over the page shot. Browsers sniff the magic bytes, so the PNGs render
+# even under the panel's jpeg data-URI prefix.
+SHOT_1PX = ("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8"
+            "z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
+CLIP_1PX = ("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk"
+            "+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==")
+
 PICK = {
     "type": "pick",
     "picks": [{
@@ -98,11 +108,12 @@ PICK = {
         # came from even after the operator navigates the controlled browser.
         "pageUrl": "http://127.0.0.1:8931/vco-target.html",
         "pageTitle": "VCO 测试页",
-        # The server attaches the lock-time screenshot; the path is what a
-        # report points at, the base64 is what the block renders. 1x1 PNG.
-        "shotPath": ".screenshot/pick-example.png",
-        "shot": ("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8"
-                 "z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="),
+        # The server attaches the lock-time captures; the paths are what a
+        # report points at, the base64 is what the card renders.
+        "shotPath": "/abs/.vco-runtime/shots/pick-example.jpg",
+        "shot": SHOT_1PX,
+        "clipPath": "/abs/.vco-runtime/shots/pick-example-clip.jpg",
+        "clip": CLIP_1PX,
         "lockedAt": 1700000000000,
     }],
 }
@@ -128,8 +139,23 @@ def main() -> int:
         errors: list[str] = []
         page.on("pageerror", lambda e: errors.append(str(e)))
         page.set_content(HOST % args.url, wait_until="load")
-        frame = page.frame_locator("#panel")
         page.wait_for_timeout(500)
+
+        # --- the sidebar is the slim one -------------------------------------
+        layout = page.frames[1].evaluate("""() => {
+          const right = document.getElementById('right');
+          return {
+            width: Math.round(right.getBoundingClientRect().width),
+            hasHoverLine: !!document.getElementById('hover-line'),
+            hasTargetUrl: !!document.getElementById('target-url'),
+            gone: ['detail-host', 'detail-card', 'type-status', 'errors', 'runs',
+                   'btn-copy-report', 'diag'].filter(id => !!document.getElementById(id)),
+          };
+        }""")
+        check("sidebar is slim (<= 400px)", layout["width"] <= 400, f"{layout['width']}px")
+        check("hover line survived the cut", layout["hasHoverLine"])
+        check("target-url card survived the cut", layout["hasTargetUrl"])
+        check("old dashboard sections are gone", layout["gone"] == [], str(layout["gone"]))
 
         # Delivering a pick goes through the frame's own ws.onmessage handler, so
         # this exercises the real render path rather than calling a renderer.
@@ -138,156 +164,77 @@ def main() -> int:
 
         check("panel has no page errors", not errors, "; ".join(errors[:2]))
 
-        # --- layout: slim sidebar, no leftover verbose blocks ---------------
-        blocks = page.frames[1].evaluate("""() => {
-          const right = document.getElementById('right');
-          const rect = right.getBoundingClientRect();
+        # --- the card is image-first ------------------------------------------
+        card = page.frames[1].evaluate("""() => {
+          const c = document.querySelector('#picks-stack .pick-card');
+          if (!c) return null;
+          const img = c.querySelector('.pick-shot img');
           return {
-            width: Math.round(rect.width),
-            kids: right.children.length,
-            hasCard: !!document.querySelector('#detail-card .fcard'),
+            sel: (c.querySelector('.pick-sel') || {}).textContent || '',
+            hasAnno: !!c.querySelector('textarea[data-selector]'),
+            buttons: Array.from(c.querySelectorAll('.pick-acts button'))
+                          .map(b => b.textContent),
+            close: !!c.querySelector('.pick-close'),
+            imgSrc: img ? img.src : '',
+            imgOk: !!img && img.complete && img.naturalWidth > 0,
+            imgFirst: !!img && img.getBoundingClientRect().top
+                      < c.querySelector('textarea').getBoundingClientRect().top,
           };
         }""")
-        check("sidebar is slim (<= 400px)", blocks["width"] <= 400, f"{blocks['width']}px")
-        check("detail block rendered after pick", blocks["hasCard"])
+        check("pick renders a card", card is not None)
+        if card is None:
+            browser.close()
+            return 1
+        check("card shows the selector", "button#submit.primary" in card["sel"], card["sel"])
+        check("card carries the annotation box", card["hasAnno"])
+        check("card offers exactly the two insert verbs",
+              card["buttons"] == ["插入图片", "插入HTML"], str(card["buttons"]))
+        check("card has the close button", card["close"])
+        check("the screenshot leads the card", card["imgFirst"])
+        check("the card renders that screenshot", card["imgOk"])
+        check("the element crop wins over the page shot",
+              card["imgSrc"].endswith(PICK["picks"][0]["clip"]),
+              card["imgSrc"][:60])
 
-        # --- the floating block sits at the top and sticks -------------------
-        geom = page.frames[1].evaluate("""() => {
-          const right = document.getElementById('right');
-          const host = document.getElementById('detail-host');
-          const card = document.querySelector('#detail-card .fcard');
-          const rightTop = right.getBoundingClientRect().top;
-          const before = card.getBoundingClientRect().top - rightTop;
-          right.scrollTop = 260;
-          const after = card.getBoundingClientRect().top - rightTop;
-          return { before: Math.round(before), after: Math.round(after),
-                   sticky: getComputedStyle(host).position };
-        }""")
-        check("detail block starts at the top of the sidebar",
-              geom["before"] < 60, f"offset {geom['before']}px")
-        check("detail block stays put while the sidebar scrolls",
-              geom["after"] == geom["before"], f"{geom['before']} -> {geom['after']}")
-        check("detail host uses sticky positioning", geom["sticky"] == "sticky", geom["sticky"])
-
-        # --- content of the block -------------------------------------------
-        content = page.frames[1].evaluate("""() => {
-          const card = document.querySelector('#detail-card .fcard');
-          // The node list is the card's SIBLING, not a descendant: it belongs to
-          // the chooser as a whole, and it lists every locked element.
-          const panel = document.getElementById('detail-card');
-          return {
-            head: card.querySelector('.grow').textContent,
-            sel: card.querySelector('.fcard-sel').textContent,
-            metaLines: card.querySelectorAll('.fcard-meta').length,
-            nodes: Array.from(panel.querySelectorAll('.fcard-node')).map(b => b.textContent),
-            selected: (panel.querySelector('.fcard-node.on') || {}).textContent || '',
-            buttons: Array.from(card.querySelectorAll('.fcard-acts button'))
-                           .map(b => b.textContent),
-            anno: !!card.querySelector('input.anno'),
-          };
-        }""")
-        check("block names the locked element", content["head"] == "<button>#submit.primary.btn",
-              content["head"])
-        check("block shows the selector", content["sel"] == "button#submit.primary", content["sel"])
-        # The block no longer repeats size/role/owner: those lines made it look
-        # like a copy of the card below, which is exactly what the operator
-        # called useless.
-        check("block does not repeat the card's metadata lines",
-              content["metaLines"] == 0, str(content["metaLines"]))
-        check("block lists the locked elements as a chooser",
-              content["nodes"] == ["1button#submit.primary", "清空全部 1"],
-              str(content["nodes"]))
-        check("the newest element is the selected one",
-              content["selected"] == "1button#submit.primary", content["selected"])
-        check("block carries the annotation box", content["anno"])
-        # Four insert verbs plus the destructive delete, which lives in the same
-        # row on purpose: a glyph pinned to the header's right edge sits under a
-        # `word-break: break-all` title and only has 22px reserved.
-        check("block offers the insert verbs, the shot path, delete and re-shoot",
-              content["buttons"] == ["选择器", "HTML", "文字", "全部信息", "截图路径",
-                                     "删除这个元素", "重新截图"],
-              str(content["buttons"]))
-        check("delete sits in the action row, not the header",
-              page.frames[1].evaluate(
-                  "() => document.querySelectorAll('#detail-card .fcard-head button.danger').length") == 0
-              and page.frames[1].evaluate(
-                  "() => document.querySelectorAll('#detail-card .fcard-acts button.danger').length") == 1)
-        # Not merely present: nothing may cover it.
-        check("delete button is the top-most element at its own centre",
-              page.frames[1].evaluate("""() => {
-                const b = document.querySelector('#detail-card button.danger');
-                if (!b) return false;
-                const r = b.getBoundingClientRect();
-                if (!(r.width > 0 && r.height > 0)) return false;
-                return document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2) === b;
-              }"""))
-
-        # --- the insert channel into the host page --------------------------
+        # --- the insert channel into the host page ---------------------------
         page.frames[1].evaluate("""() => {
-          document.querySelector('#detail-card .fcard-acts button:nth-child(1)').click();
+          const b = Array.from(document.querySelectorAll('#picks-stack .pick-acts button'))
+            .find(x => x.textContent === '插入图片');
+          b.click();
         }""")
         page.wait_for_timeout(200)
         posted = page.evaluate("() => window.__posted")
-        check("selector button posts to the host page",
-              bool(posted) and posted[0].get("kind") == "insert-text",
-              json.dumps(posted[0], ensure_ascii=False) if posted else "nothing posted")
-        check("posted payload is the selector",
-              bool(posted) and posted[0].get("text") == "button#submit.primary",
-              posted[0].get("text") if posted else "")
+        block = posted[-1].get("text", "") if posted else ""
+        check("插入图片 posts to the host page",
+              bool(posted) and posted[-1].get("kind") == "info",
+              json.dumps(posted[-1], ensure_ascii=False)[:200] if posted else "nothing posted")
+        check("payload names the page the pick came from",
+              "VCO 测试页" in block and "vco-target.html" in block,
+              block.splitlines()[1] if block else "nothing posted")
+        check("payload carries the DOM tree position",
+              "- DOM:" in block and "button#submit.primary" in block)
+        check("payload ends with the image files",
+              "- 截图: /abs/.vco-runtime/shots/pick-example.jpg" in block
+              and block.rstrip().endswith("- 裁剪图: /abs/.vco-runtime/shots/pick-example-clip.jpg"),
+              block.splitlines()[-1] if block else "")
 
         page.frames[1].evaluate("""() => {
-          document.querySelector('#detail-card .fcard-acts button.wide').click();
+          const b = Array.from(document.querySelectorAll('#picks-stack .pick-acts button'))
+            .find(x => x.textContent === '插入HTML');
+          b.click();
         }""")
         page.wait_for_timeout(200)
-        info = page.evaluate("() => window.__posted")
-        check("info button posts the whole block",
-              len(info) >= 2 and "button#submit.primary" in info[-1].get("text", ""),
-              (info[-1].get("text", "").replace("\n", " | ") if len(info) >= 2 else "nothing posted"))
+        posted = page.evaluate("() => window.__posted")
+        check("插入HTML posts the element markup",
+              len(posted) >= 2 and posted[-1].get("text") == PICK["picks"][0]["outerHTML"],
+              (posted[-1].get("text", "")[:120] if posted else "nothing posted"))
 
-        # The whole point of the payload: it must say WHICH page the element is
-        # on and WHERE on it, not just which selector matched.
-        postedBlock = info[-1].get("text", "") if info else ""
-        check("payload names the page the pick came from",
-              "VCO 测试页" in postedBlock and "vco-target.html" in postedBlock,
-              postedBlock.splitlines()[1] if postedBlock else "nothing posted")
-        # The block is deliberately four things and no more: the operator's
-        # note, the page, the DOM position, and the screenshot. Size, role,
-        # owner, attributes and raw HTML were noise in a chat message.
-        check("payload carries the DOM tree position",
-              "- DOM:" in postedBlock and "button#submit.primary" in postedBlock)
-        # Three lines without a note, four with one: the operator's note is the
-        # only optional part. Nothing else belongs in a chat message.
-        lines = [l for l in postedBlock.splitlines() if l.strip()]
-        check("payload stays page + DOM + screenshot (plus the note when typed)",
-              3 <= len(lines) <= 4 and lines[-1].startswith("- 截图:"),
-              str(len(lines)) + " lines")
-        check("payload points at the lock-time screenshot",
-              "- 截图:" in postedBlock and "pick-example.png" in postedBlock)
-        check("re-shoot asks the server for a fresh capture",
-              page.frames[1].evaluate("""() => {
-                window.__sent = [];
-                const b = Array.from(document.querySelectorAll('#detail-card .fcard-acts button'))
-                  .find(x => x.textContent === '重新截图');
-                if (!b) return false;
-                b.click();
-                return window.__sent.some(s => s.includes('rescreenshot'));
-              }"""))
-        check("the block renders that screenshot inline",
-              page.frames[1].evaluate("""() => {
-                const i = document.querySelector('.fcard-shot img');
-                return !!i && i.complete && i.naturalWidth > 0;
-              }"""))
-
-        # --- annotation reaches the report ----------------------------------
-        frame.locator("#detail-card input.anno").fill("点了没反应")
+        # --- annotation still syncs to the server ----------------------------
+        page.frames[1].locator("#picks-stack textarea[data-selector]").fill("点了没反应")
         page.wait_for_timeout(700)
-        # textContent, not innerText: the report lives inside a closed <details>.
-        check("annotation lands in the report",
-              "点了没反应" in page.frames[1].evaluate(
-                  "() => document.getElementById('report-preview').textContent"))
-        check("the stack still lists the locked element",
+        check("annotation is sent back to the server",
               page.frames[1].evaluate(
-                  "() => document.querySelectorAll('#picks-stack .pick-card').length") == 1)
+                  "() => window.__sent.some(s => s.includes('annotate') && s.includes('点了没反应'))"))
 
         page.screenshot(path=args.shot, full_page=False)
         print(f"\nscreenshot: {args.shot}")

@@ -1248,6 +1248,32 @@ class LoopTests(unittest.TestCase):
             self.assertNotIn("x", action_record["model_action"])
             self.assertEqual(action_record["resolved_local_action"]["start"], [220, 50])
 
+    def test_on_step_sees_each_observation_and_a_failure_is_swallowed(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            seen = []
+
+            def on_step(step, title, detail, image, elapsed):
+                seen.append((step, title, image))
+                if step == 1:
+                    raise RuntimeError("a viewer must never take the run down")
+
+            loop = ComputerUseLoop(
+                capture=FakeCapture(),
+                provider=FakeProvider(),
+                executor=DryRunExecutor(),
+                region=Region(x=10, y=20, width=240, height=120),
+                grid=GridSpec(rows=2, cols=4),
+                artifact_root=Path(temp_dir),
+                settle_seconds=0,
+                on_step=on_step,
+            )
+            result = loop.run("click it", max_steps=3)
+
+            # Step 1 raised inside the callback and the run still finished.
+            self.assertEqual(result.status, "done")
+            self.assertEqual([s[0] for s in seen], [1, 2])
+            self.assertTrue(seen[0][2].endswith("step-001-grid.png"))
+
 
 class ExtendedActionTests(unittest.TestCase):
     def setUp(self):

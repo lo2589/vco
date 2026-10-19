@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import atexit
 import sys
 import time
 from dataclasses import dataclass
 from typing import Protocol, Tuple
 
+from .cursor_badge import AgentCursorBadge
 from .models import Action, normalize_keys
 
 
@@ -65,7 +67,7 @@ def input_text(text: str, *, paste: bool = False, press_enter: int = 0) -> None:
 class PyAutoGuiExecutor:
     """Real mouse control. Import is delayed so core features stay lightweight."""
 
-    def __init__(self, pause: float = 0.1):
+    def __init__(self, pause: float = 0.1, cursor_badge: bool = True):
         try:
             import pyautogui
         except ImportError as exc:
@@ -75,8 +77,22 @@ class PyAutoGuiExecutor:
         pyautogui.FAILSAFE = True
         pyautogui.PAUSE = pause
         self._driver = pyautogui
+        self._badge = AgentCursorBadge(enabled=cursor_badge)
+        self._badge_started = False
+
+    def _ensure_badge(self) -> None:
+        # Lazy: the badge appears with the FIRST real action, not at executor
+        # construction — a process that never moves the mouse never claims to
+        # be driving it. atexit (not __del__) guarantees the helper is reaped
+        # even when the command path returns early.
+        if self._badge_started:
+            return
+        self._badge_started = True
+        self._badge.start()
+        atexit.register(self._badge.stop)
 
     def execute(self, action: ResolvedAction) -> None:
+        self._ensure_badge()
         if action.type == "click":
             self._driver.click(
                 *action.start, clicks=action.clicks, button=action.button

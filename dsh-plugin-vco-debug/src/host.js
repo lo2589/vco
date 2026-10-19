@@ -33,7 +33,7 @@ module.exports = {
     config = config || {}
     const root = typeof config.workspace === 'string' && config.workspace
       ? config.workspace
-      : (process.env.VCO_HOME || process.cwd())
+      : (process.env.VCO_HOME || path.resolve(__dirname, '..', '..'))
 
     // Where pick screenshots land. Inside the workspace, so the path written
     // into the chat is one the reader can actually open, and so the shot route
