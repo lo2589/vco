@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "vco": {
+      "command": "/usr/bin/python3",
+      "args": ["-m", "vco.mcp_server"],
+      "cwd": "<path-to-vco-repo>",
+      "env": {
+        "VCO_MINIMAX_SETTINGS": "<path-to-provider_settings.minimax.json>",
+        "VCO_GLM_SETTINGS": "<path-to-provider_settings.glm.json>",
+        "VCO_CACHE_ROOT": "<path-to-cache-dir>"
+      }
+    }
+  }
+}

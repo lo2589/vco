@@ -11,6 +11,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+from . import __version__
 from .adaptive_zoom import AdaptiveZoomProvider
 from .capture import PillowScreenCapture
 from .executor import DryRunExecutor, PyAutoGuiExecutor, resolve_action
@@ -565,7 +566,7 @@ def _dispatch(message: dict):
             "result": {
                 "protocolVersion": protocol,
                 "capabilities": {"tools": {"listChanged": False}},
-                "serverInfo": {"name": "vco", "version": "0.1.5"},
+                "serverInfo": {"name": "vco", "version": __version__},
             },
         }
     if method == "ping":

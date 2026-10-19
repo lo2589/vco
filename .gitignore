@@ -25,11 +25,9 @@ provider_settings.*.json
 *.openai.json
 !*.json.example
 .*
+!.mcp.json
 
 # AI-assisted development artifacts (kept locally, never committed)
 HANDOFF.md
 vco-click-trace.md
 .kimi-code/
-/skills/
-plugins/**/skills/operate-screen/SKILL.md
-debug/results*/SUMMARY.md
